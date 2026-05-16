@@ -33,6 +33,8 @@ const RenderClipSchema = z.object({
   sourcePath: z.string().trim().min(1).max(500),
   candidate: ClipCandidateSchema,
   templateId: z.string().max(120).optional(),
+  customWidth: z.number().int().min(256).max(3840).optional(),
+  customHeight: z.number().int().min(256).max(3840).optional(),
   settings: z
     .object({
       durationMode: z.string().optional(),
@@ -107,7 +109,8 @@ export async function POST(request: Request) {
       sourcePath: resolvedPath,
       candidate: input.data.candidate,
       settings: normalizeRenderSettings(input.data.settings || {}),
-      platform: input.data.candidate.platform,
+      customWidth: input.data.customWidth,
+      customHeight: input.data.customHeight,
     });
 
     return NextResponse.json({

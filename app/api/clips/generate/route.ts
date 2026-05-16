@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import path from "node:path";
 import { analyzeSourceVideo, type ClipCandidate } from "@/app/lib/clips";
 import { renderClip } from "@/app/lib/ffmpeg/clipper";
 import { resolveSourceVideoPath } from "@/app/lib/ffmpeg/source-video";
@@ -7,6 +10,8 @@ import {
   normalizeRenderSettings,
   type RenderSettings,
 } from "@/app/lib/render-settings";
+
+const execFileAsync = promisify(execFile);
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -17,6 +22,9 @@ const GenerateClipsSchema = z.object({
   maxClips: z.number().int().min(1).max(5).default(3),
   targetDuration: z.number().min(8).max(90).optional(),
   templateId: z.string().max(120).optional(),
+  customWidth: z.number().int().min(256).max(3840).optional(),
+  customHeight: z.number().int().min(256).max(3840).optional(),
+  language: z.enum(["auto", "id", "en"]).default("auto"),
   settings: z
     .object({
       quality: z.string().optional(),
@@ -69,6 +77,7 @@ export async function POST(request: Request) {
 
     const maxClips = Math.min(input.data.maxClips || 3, 5);
     const settings = normalizeRenderSettings(input.data.settings || {});
+    const words = await transcribeSource(resolvedPath, input.data.language);
     const analysis = await analyzeSourceVideo(
       {
         sourcePath: input.data.sourcePath,
@@ -88,7 +97,16 @@ export async function POST(request: Request) {
     const clips: GeneratedClip[] = [];
 
     for (const candidate of candidates) {
-      clips.push(await renderCandidate(resolvedPath, candidate, settings));
+      clips.push(
+        await renderCandidate(
+          resolvedPath,
+          candidate,
+          settings,
+          input.data.customWidth,
+          input.data.customHeight,
+          words
+        )
+      );
     }
 
     return NextResponse.json({
@@ -117,14 +135,19 @@ export async function POST(request: Request) {
 async function renderCandidate(
   resolvedPath: string,
   candidate: ClipCandidate,
-  settings: RenderSettings
+  settings: RenderSettings,
+  customWidth?: number,
+  customHeight?: number,
+  words?: Array<{ word: string; start: number; end: number }>
 ): Promise<GeneratedClip> {
   try {
     const output = await renderClip({
       sourcePath: resolvedPath,
       candidate,
       settings,
-      platform: candidate.platform,
+      customWidth,
+      customHeight,
+      words,
     });
 
     return {
@@ -153,6 +176,38 @@ async function renderCandidate(
       endTime: candidate.endTime,
       error: error instanceof Error ? error.message : "Clip render failed.",
     };
+  }
+}
+
+type TranscriptionWord = { word: string; start: number; end: number };
+
+async function transcribeSource(
+  resolvedPath: string,
+  language: string
+): Promise<TranscriptionWord[]> {
+  try {
+    const scriptPath = path.join(process.cwd(), "scripts", "transcribe.py");
+    const args = [scriptPath, resolvedPath, "--model", "small"];
+    if (language !== "auto") {
+      args.push("--language", language);
+    }
+    const { stdout } = await execFileAsync("python", args, {
+      timeout: 120_000,
+      maxBuffer: 10 * 1024 * 1024,
+    });
+    const result = JSON.parse(stdout);
+    if (result.error) {
+      console.error("Transcription error:", result.error);
+      return [];
+    }
+    return (result.words || []).map((w: { word: string; start: number; end: number }) => ({
+      word: w.word,
+      start: w.start,
+      end: w.end,
+    }));
+  } catch (error) {
+    console.error("Transcription failed, falling back to static captions:", error);
+    return [];
   }
 }
 

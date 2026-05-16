@@ -144,6 +144,10 @@ export function ViralClipStudio({
   const [copiedClipKey, setCopiedClipKey] = useState("");
   const [expandedCaption, setExpandedCaption] = useState<number | null>(null);
   const [settings] = useState<AppSettings>(readSettings);
+  const [platform, setPlatform] = useState<string>("reels");
+  const [customWidth, setCustomWidth] = useState<number>(1080);
+  const [customHeight, setCustomHeight] = useState<number>(1920);
+  const [language, setLanguage] = useState<"auto" | "id" | "en">("auto");
 
   const activeVideo =
     uploadedVideos.find((v) => v.sourcePath === activeSourcePath) || null;
@@ -212,17 +216,21 @@ export function ViralClipStudio({
     if (!activeVideo) return;
 
     setIsGenerating(true);
-    setGenerateStep("Analyzing source video");
+    setGenerateStep("Starting transcription...");
     setError("");
     setClips([]);
 
     const stepTimer1 = window.setTimeout(
-      () => setGenerateStep("Selecting viral moments"),
+      () => setGenerateStep("Analyzing source video"),
       800
     );
     const stepTimer2 = window.setTimeout(
-      () => setGenerateStep("Rendering clips"),
+      () => setGenerateStep("Selecting viral moments"),
       1600
+    );
+    const stepTimer3 = window.setTimeout(
+      () => setGenerateStep("Rendering clips"),
+      2400
     );
 
     try {
@@ -231,10 +239,13 @@ export function ViralClipStudio({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           sourcePath: activeVideo.sourcePath,
-          platform: "reels",
+          platform,
           maxClips: settings.maxClips,
           targetDuration: settings.targetDuration,
           templateId: defaultTemplateId,
+          customWidth: platform === "custom" ? customWidth : undefined,
+          customHeight: platform === "custom" ? customHeight : undefined,
+          language,
           settings: { quality: settings.quality },
         }),
       });
@@ -261,6 +272,7 @@ export function ViralClipStudio({
     } finally {
       window.clearTimeout(stepTimer1);
       window.clearTimeout(stepTimer2);
+      window.clearTimeout(stepTimer3);
       setIsGenerating(false);
     }
   }
@@ -461,6 +473,95 @@ export function ViralClipStudio({
               ))}
             </AnimatePresence>
 
+            {/* Platform Selector */}
+            {hasUploads ? (
+              <div className="space-y-3">
+                <div className="flex flex-wrap gap-2">
+                  {[
+                    { id: "reels", label: "Reels", dims: "1080×1920" },
+                    { id: "tiktok", label: "TikTok", dims: "1080×1920" },
+                    { id: "youtube", label: "YouTube", dims: "1920×1080" },
+                    { id: "square", label: "Square", dims: "1080×1080" },
+                    { id: "custom", label: "Custom", dims: "Set size" },
+                  ].map((p) => (
+                    <button
+                      key={p.id}
+                      type="button"
+                      onClick={() => setPlatform(p.id)}
+                      className={`flex flex-col items-center rounded-lg border px-4 py-2 text-xs transition ${
+                        platform === p.id
+                          ? "border-cyan-400/50 bg-cyan-400/10 text-cyan-400"
+                          : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:border-zinc-700"
+                      }`}
+                    >
+                      <span className="font-medium">{p.label}</span>
+                      <span className="mt-0.5 text-[10px] text-zinc-500">
+                        {p.dims}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+
+                {platform === "custom" ? (
+                  <div className="flex items-center gap-3 rounded-lg border border-zinc-800 bg-zinc-900 p-3">
+                    <label className="flex items-center gap-2">
+                      <span className="text-xs text-zinc-500">W</span>
+                      <input
+                        type="number"
+                        min={256}
+                        max={3840}
+                        value={customWidth}
+                        onChange={(e) => setCustomWidth(Number(e.target.value))}
+                        className="h-8 w-20 rounded-md border border-zinc-700 bg-zinc-800 px-2 text-xs text-white outline-none focus:border-cyan-400/50"
+                      />
+                    </label>
+                    <span className="text-xs text-zinc-600">×</span>
+                    <label className="flex items-center gap-2">
+                      <span className="text-xs text-zinc-500">H</span>
+                      <input
+                        type="number"
+                        min={256}
+                        max={3840}
+                        value={customHeight}
+                        onChange={(e) =>
+                          setCustomHeight(Number(e.target.value))
+                        }
+                        className="h-8 w-20 rounded-md border border-zinc-700 bg-zinc-800 px-2 text-xs text-white outline-none focus:border-cyan-400/50"
+                      />
+                    </label>
+                    <span className="text-[10px] text-zinc-600">px</span>
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
+            {/* Language Selector */}
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-zinc-500">Captions</span>
+              <div className="flex gap-1">
+                {(
+                  [
+                    { id: "auto", label: "Auto" },
+                    { id: "id", label: "ID" },
+                    { id: "en", label: "EN" },
+                  ] as const
+                ).map((l) => (
+                  <button
+                    key={l.id}
+                    type="button"
+                    onClick={() => setLanguage(l.id)}
+                    className={`rounded-md border px-3 py-1 text-xs transition ${
+                      language === l.id
+                        ? "border-cyan-400/50 bg-cyan-400/10 text-cyan-400"
+                        : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:border-zinc-700"
+                    }`}
+                  >
+                    {l.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {/* Generate Button */}
             {hasUploads ? (
               <motion.div
@@ -560,9 +661,16 @@ export function ViralClipStudio({
                   <div className="p-4">
                     <div className="mb-3 flex items-start justify-between gap-3">
                       <div className="min-w-0 flex-1">
-                        <p className="text-xs text-zinc-500">
-                          {clip.startTime}s &ndash; {clip.endTime}s
-                        </p>
+                        <div className="flex items-center gap-2">
+                          <span className="inline-flex rounded-md bg-zinc-800 px-1.5 py-0.5 text-[10px] font-medium text-zinc-400 uppercase">
+                            {platform === "custom"
+                              ? `${customWidth}×${customHeight}`
+                              : platform}
+                          </span>
+                          <p className="text-xs text-zinc-500">
+                            {clip.startTime}s &ndash; {clip.endTime}s
+                          </p>
+                        </div>
                         <h3 className="mt-1 text-sm font-semibold text-white">
                           {clip.title}
                         </h3>

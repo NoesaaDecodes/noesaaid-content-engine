@@ -1,35 +1,30 @@
 import ffmpeg from "fluent-ffmpeg";
+import path from "node:path";
 import {
   createClipOutputPath,
   ensureRenderDirectories,
 } from "@/app/lib/ffmpeg/assets";
 import { qualityOptions, type RenderSettings } from "@/app/lib/render-settings";
-import type { ClipCandidate, ClipPlatformTarget } from "@/app/lib/clips";
+import type { ClipCandidate } from "@/app/lib/clips";
 
 const fps = 30;
-
-type Platform = "reels" | "tiktok" | "shorts" | "square" | "landscape";
-
-const PLATFORM_DIMS: Record<Platform, { w: number; h: number }> = {
-  reels: { w: 1080, h: 1920 },
-  tiktok: { w: 1080, h: 1920 },
-  shorts: { w: 1080, h: 1920 },
-  square: { w: 1080, h: 1080 },
-  landscape: { w: 1920, h: 1080 },
-};
 
 type ClipRenderInput = {
   sourcePath: string;
   candidate: ClipCandidate;
   settings: RenderSettings;
-  platform?: ClipPlatformTarget;
+  customWidth?: number;
+  customHeight?: number;
+  words?: Array<{ word: string; start: number; end: number }>;
 };
 
 export async function renderClip({
   sourcePath,
   candidate,
   settings,
-  platform,
+  customWidth,
+  customHeight,
+  words,
 }: ClipRenderInput) {
   await ensureRenderDirectories();
 
@@ -40,9 +35,10 @@ export async function renderClip({
     throw new Error("Invalid clip candidate duration.");
   }
 
-  const resolvedPlatform: Platform =
-    platform && platform in PLATFORM_DIMS ? (platform as Platform) : "reels";
-  const dims = PLATFORM_DIMS[resolvedPlatform];
+  const dims = {
+    w: Number.isFinite(customWidth) && customWidth! > 0 ? customWidth! : 1080,
+    h: Number.isFinite(customHeight) && customHeight! > 0 ? customHeight! : 1920,
+  };
 
   const sourceDims = await probeVideoDimensions(sourcePath);
   const isVerticalSource = sourceDims.h > sourceDims.w;
@@ -55,9 +51,7 @@ export async function renderClip({
     settings,
     dims,
     isVerticalSource,
-    hook: candidate.suggestedHook,
-    caption: candidate.suggestedCaption,
-    score: candidate.score,
+    words,
   });
 
   return {
@@ -101,9 +95,7 @@ async function runClipRender({
   settings,
   dims,
   isVerticalSource,
-  hook,
-  caption,
-  score,
+  words,
 }: {
   sourcePath: string;
   outputPath: string;
@@ -112,9 +104,7 @@ async function runClipRender({
   settings: RenderSettings;
   dims: { w: number; h: number };
   isVerticalSource: boolean;
-  hook: string;
-  caption: string;
-  score: number;
+  words?: Array<{ word: string; start: number; end: number }>;
 }) {
   const quality = qualityOptions[settings.quality];
   const { w, h } = dims;
@@ -123,27 +113,37 @@ async function runClipRender({
 
   const applyZoompan = isVerticalSource && duration <= 60;
   const baseVideo = applyZoompan
-    ? `[0:v]${scalePad},zoompan=z='min(zoom+0.0008,1.08)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${w}x${h}:fps=${fps},format=yuv420p[vbase]`
+    ? `[0:v]${scalePad},zoompan=z='min(zoom+0.0008,1.08)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${w}x${h}:fps=${fps},crop=iw:ih:0:0,format=yuv420p[vbase]`
     : `[0:v]${scalePad},format=yuv420p[vbase]`;
 
-  const safeHook = truncateForOverlay(hook, 38);
-  const safeCaption = truncateForOverlay(caption, 52);
-  const escapedHook = escapeDrawtextText(safeHook);
-  const escapedCaption = escapeDrawtextText(safeCaption);
-  const scoreText = `${score}`;
-
-  const hookEnable = `between(t,0,2.5)`;
-  const captionEnable = `between(t,2.5,${duration})`;
   const progressEnable = `gte(t,0)`;
   const fontFile = getFontFile();
+  const captionSize = Math.max(40, Math.min(64, Math.round(h * 0.036)));
+
+  const { filters: wordFilters, lastLabel } = buildWordCaptionFilters(
+    words || [],
+    startTime,
+    duration,
+    fontFile,
+    captionSize
+  );
 
   const filters = [
     baseVideo,
-    `[vbase]drawbox=x=0:y=ih*0.75:w=iw:h=ih*0.25:color=black@0.45:t=fill[vbox]`,
-    `[vbox]drawtext=${fontFile}text='${escapedHook}':fontsize=44:fontcolor=white:borderw=2:bordercolor=black@0.8:x=(w-text_w)/2:y=h*0.15:enable='${hookEnable}'[vhook]`,
-    `[vhook]drawtext=${fontFile}text='${escapedCaption}':fontsize=34:fontcolor=white:borderw=2:bordercolor=black@0.8:x=(w-text_w)/2:y=h*0.80:enable='${captionEnable}'[vcap]`,
-    `[vcap]drawbox=x=0:y=ih-6:w=iw*t/${duration}:h=6:color=cyan@0.85:t=fill:enable='${progressEnable}'[vprog]`,
-    `[vprog]drawtext=${fontFile}text='${scoreText}':fontsize=28:fontcolor=cyan:borderw=2:bordercolor=black@0.7:x=w-text_w-24:y=24[vout]`,
+    `[vbase]drawbox=x=0:y=ih*0.45:w=iw:h=ih*0.08:color=black@0.03:t=fill[vg1]`,
+    `[vg1]drawbox=x=0:y=ih*0.53:w=iw:h=ih*0.08:color=black@0.06:t=fill[vg2]`,
+    `[vg2]drawbox=x=0:y=ih*0.61:w=iw:h=ih*0.08:color=black@0.10:t=fill[vg3]`,
+    `[vg3]drawbox=x=0:y=ih*0.69:w=iw:h=ih*0.08:color=black@0.15:t=fill[vg4]`,
+    `[vg4]drawbox=x=0:y=ih*0.77:w=iw:h=ih*0.08:color=black@0.22:t=fill[vg5]`,
+    `[vg5]drawbox=x=0:y=ih*0.85:w=iw:h=ih*0.15:color=black@0.30:t=fill[vgrad]`,
+    `[vgrad]format=yuv420p[vready]`,
+    ...wordFilters.map((f, i) => {
+      if (i === 0) {
+        return f.replace(`[vbase]`, `[vready]`);
+      }
+      return f;
+    }),
+    `[${lastLabel}]drawbox=x=0:y=ih-6:w=iw*t/${duration}:h=6:color=cyan@0.85:t=fill:enable='${progressEnable}'[vout]`,
   ];
 
   await new Promise<void>((resolve, reject) => {
@@ -183,11 +183,79 @@ async function runClipRender({
   });
 }
 
-function truncateForOverlay(text: string, maxChars: number): string {
-  if (!text) return "";
-  const cleaned = text.replace(/[\r\n]+/g, " ").trim();
-  if (cleaned.length <= maxChars) return cleaned;
-  return cleaned.slice(0, maxChars - 3) + "...";
+type PhraseGroup = {
+  text: string;
+  start: number;
+  end: number;
+};
+
+function buildWordCaptionFilters(
+  words: Array<{ word: string; start: number; end: number }>,
+  clipStart: number,
+  clipDuration: number,
+  fontFile: string,
+  captionSize: number
+): { filters: string[]; lastLabel: string } {
+  if (!words.length) return { filters: [], lastLabel: "vready" };
+
+  const clipEnd = clipStart + clipDuration;
+  const overlapping = words
+    .filter((w) => w.end > clipStart && w.start < clipEnd)
+    .map((w) => ({
+      word: w.word,
+      start: Math.max(0, w.start - clipStart),
+      end: Math.min(clipDuration, w.end - clipStart),
+    }))
+    .sort((a, b) => a.start - b.start);
+
+  if (!overlapping.length) return { filters: [], lastLabel: "vready" };
+
+  const phrases: PhraseGroup[] = [];
+  let current: PhraseGroup = {
+    text: overlapping[0].word,
+    start: overlapping[0].start,
+    end: overlapping[0].end,
+  };
+  let wordCount = 1;
+
+  for (let i = 1; i < overlapping.length; i++) {
+    const w = overlapping[i];
+    const gap = w.start - current.end;
+    if (wordCount >= 2 || gap > 0.3) {
+      phrases.push(current);
+      current = { text: w.word, start: w.start, end: w.end };
+      wordCount = 1;
+    } else {
+      current.text += " " + w.word;
+      current.end = w.end;
+      wordCount++;
+    }
+  }
+  phrases.push(current);
+
+  const maxPhrases = 30;
+  const capped = phrases.slice(0, maxPhrases);
+
+  const filters: string[] = [];
+  let prevLabel = "vready";
+
+  for (let i = 0; i < capped.length; i++) {
+    const p = capped[i];
+    const escaped = escapeDrawtextText(p.text);
+    const nextLabel = `vcaption${i}`;
+    filters.push(
+      `[${prevLabel}]drawtext=${fontFile}text='${escaped}':fontsize=${captionSize}:fontcolor=#FFE600:shadowx=3:shadowy=3:shadowcolor=black@0.9:x='max(80,(w-text_w)/2)':y=h*0.80:enable='between(t,${p.start.toFixed(3)},${p.end.toFixed(3)})'[${nextLabel}]`
+    );
+    prevLabel = nextLabel;
+  }
+
+  return { filters, lastLabel: prevLabel };
+}
+
+function toFFmpegPath(p: string): string {
+  return p
+    .replace(/\\/g, "/")
+    .replace(/^([A-Z]):/, (_, drive: string) => drive + "\\:");
 }
 
 function getFontFile(): string {
@@ -195,11 +263,13 @@ function getFontFile(): string {
     return `fontfile='${process.env.FFMPEG_FONT_PATH}':`;
   }
 
-  if (process.platform === "win32") {
-    return "fontfile='C\\:/Windows/Fonts/arial.ttf':";
-  }
-
-  return "fontfile='/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf':";
+  const localFont = path.join(
+    process.cwd(),
+    "assets",
+    "fonts",
+    "Montserrat-Bold.ttf"
+  );
+  return `fontfile='${toFFmpegPath(localFont)}':`;
 }
 
 function escapeDrawtextText(text: string): string {
