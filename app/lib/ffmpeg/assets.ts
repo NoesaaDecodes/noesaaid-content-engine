@@ -5,12 +5,14 @@ import { mkdir, readdir } from "node:fs/promises";
 export const projectRoot = process.cwd();
 export const assetsRoot = path.join(projectRoot, "assets");
 export const footageDir = path.join(assetsRoot, "footage");
+export const footageUploadsDir = path.join(footageDir, "uploads");
 export const musicDir = path.join(assetsRoot, "music");
 export const outputsDir = path.join(projectRoot, "outputs");
 export const renderTempDir = path.join(projectRoot, ".next", "render-tmp");
 
-const footageExtensions = new Set([".mp4", ".mov", ".webm"]);
+const footageExtensions = new Set([".mp4", ".mov", ".mkv", ".webm"]);
 const musicExtensions = new Set([".mp3", ".wav", ".m4a", ".aac"]);
+export const sourceVideoExtensions = new Set([".mp4", ".mov", ".mkv", ".webm"]);
 
 export type AssetFile = {
   name: string;
@@ -21,6 +23,7 @@ export type AssetFile = {
 export async function ensureRenderDirectories() {
   await Promise.all([
     mkdir(footageDir, { recursive: true }),
+    mkdir(footageUploadsDir, { recursive: true }),
     mkdir(musicDir, { recursive: true }),
     mkdir(outputsDir, { recursive: true }),
     mkdir(renderTempDir, { recursive: true }),
@@ -117,6 +120,23 @@ export function createOutputPath() {
 
   const suffix = randomUUID().replace(/-/g, "").slice(0, 8);
   const filename = `ai-reel-${stamp}-${suffix}.mp4`;
+
+  return {
+    filename,
+    outputPath: path.join(outputsDir, filename),
+    publicPath: path.join("outputs", filename).replace(/\\/g, "/"),
+    downloadUrl: `/api/render-reel/file/${filename}`,
+  };
+}
+
+export function createClipOutputPath() {
+  const stamp = new Date()
+    .toISOString()
+    .replace(/[-:]/g, "")
+    .replace(/\.\d{3}Z$/, "Z");
+
+  const suffix = randomUUID().replace(/-/g, "").slice(0, 8);
+  const filename = `ai-clip-${stamp}-${suffix}.mp4`;
 
   return {
     filename,

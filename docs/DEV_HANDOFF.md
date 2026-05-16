@@ -8,6 +8,8 @@ This project is a lightweight, local-first AI short-form video engine. The core 
 - MiMo API generates structured reel concepts.
 - Zod validates API inputs.
 - FFmpeg CLI, through `fluent-ffmpeg`, renders vertical MP4 files.
+- A lightweight Retention Engine computes heuristic pacing and emphasis hints before FFmpeg render.
+- Clip Generator analyzes local source videos with ffprobe and creates duration-based short-form candidates.
 - Local filesystem stores source assets and generated outputs.
 - Browser localStorage stores lightweight generation history.
 
@@ -30,8 +32,26 @@ This project is a lightweight, local-first AI short-form video engine. The core 
   - Falls back to default template and render settings when needed.
   - Writes MP4 output to `outputs/`.
 
+- `POST /api/clips/analyze`
+  - Accepts `sourcePath`, `platform`, `maxClips`, and optional `targetDuration`.
+  - Allows only local source videos from `assets/footage/` and `outputs/`.
+  - Uses ffprobe duration metadata and deterministic heuristics.
+  - Does not render output.
+
+- `POST /api/clips/upload`
+  - Accepts multipart video uploads using the `files` field.
+  - Allows `.mp4`, `.mov`, `.mkv`, and `.webm`.
+  - Saves safe generated filenames under `assets/footage/uploads/`.
+  - Returns uploaded file metadata and per-file errors.
+
+- `POST /api/clips/render`
+  - Accepts `sourcePath` and a selected clip candidate.
+  - Validates source path and candidate timing.
+  - Cuts the source video into a vertical MP4 under `outputs/`.
+  - Keeps clipping synchronous.
+
 - `GET /api/render-reel/file/[filename]`
-  - Serves generated MP4 files only.
+  - Serves generated reel and clip MP4 files only.
   - Rejects traversal, invalid names, and non-MP4 output access.
 
 ## Core Modules
@@ -54,16 +74,35 @@ This project is a lightweight, local-first AI short-form video engine. The core 
   - Subtitle sizes: `small`, `medium`, `large`.
   - Quality modes: `draft`, `standard`, `high`.
 
+- `app/lib/retention/index.ts`
+  - Exports the local-first Retention Engine.
+  - Produces `scrollStopScore`, `pacingProfile`, `dopamineBeats`, `loopFriendlyEnding`, `subtitleEmphasisPlan`, and `sceneCompositionHints`.
+  - Uses safe fallback planning so FFmpeg rendering can continue if scoring fails.
+
+- `app/lib/clips/index.ts`
+  - Exports the Clip Generator engine.
+  - Produces candidate windows, scores, hooks, captions, hashtags, visual plans, and retention metadata.
+  - Uses duration-based heuristics only; transcript/STT support is a future extension.
+
 - `app/lib/ffmpeg/assets.ts`
   - Asset directory helpers.
   - Safe filename and extension validation.
+  - Safe source-video path resolution for `assets/footage/` and `outputs/`.
+  - Creates `assets/footage/uploads/` for Clip Generator uploads.
+
+- `app/lib/ffmpeg/clipper.ts`
+  - FFmpeg clip cutter.
+  - Converts selected source ranges into 1080x1920 MP4 output.
+  - Preserves audio when available.
 
 - `app/lib/ffmpeg/subtitles.ts`
   - Script-to-subtitle scene splitting and timing.
+  - Applies retention pacing hints to hook, body, and final subtitle durations.
 
 - `app/lib/ffmpeg/renderer.ts`
   - FFmpeg render pipeline.
   - Keeps rendering niche-agnostic.
+  - Applies retention subtitle emphasis and CTA timing without changing the synchronous architecture.
 
 ## Presets, Templates, and Settings
 
@@ -80,7 +119,10 @@ Do not mix these layers. For example, do not hardcode football, futsal, crypto, 
 - Only serve files from `outputs/` through the download route.
 - Only allow generated MP4 filenames matching the route pattern.
 - Only render selected assets that are returned by the asset manager.
+- Only analyze and clip source videos from `assets/footage/` or `outputs/`.
+- Only save uploaded source videos to `assets/footage/uploads/`.
 - Keep drawtext input escaped and file-based.
+- Keep retention logic optional and fallback-safe.
 - Keep script and line counts bounded.
 - Keep all filesystem paths resolved through server-side helpers.
 - Use fallback behavior for missing assets, invalid templates, and invalid render settings.

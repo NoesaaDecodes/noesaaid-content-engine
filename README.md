@@ -1,6 +1,6 @@
 # NoesaaID Reels Engine
 
-NoesaaID Reels Engine is a local-first AI short-form video engine built with Next.js 16, TypeScript, Tailwind, MiMo API, and FFmpeg. The current MVP generates short-form scripts, renders vertical MP4 reels from templates, and serves completed videos through a safe local download route.
+NoesaaID Reels Engine is a local-first AI short-form video engine built with Next.js 16, TypeScript, Tailwind, MiMo API, and FFmpeg. The current MVP generates short-form scripts, renders vertical MP4 reels from templates, creates short-form clip candidates from local source videos, and serves completed videos through a safe local download route.
 
 The engine is general-purpose. NeedSport is included only as the first niche preset for football, futsal, jersey, and matchday-style content.
 
@@ -13,6 +13,9 @@ The engine is general-purpose. NeedSport is included only as the first niche pre
 - Template system for FFmpeg-only visual styles.
 - Render settings for duration, subtitle size, and quality.
 - 1080x1920 vertical MP4 rendering with subtitles.
+- Clip Generator MVP for local source videos.
+- Multi-file upload workflow for Clip Generator source videos.
+- Duration-based clip candidate scoring for Reels, TikTok, YouTube Shorts, and generic short-form output.
 - Secure MP4 download route restricted to generated output files.
 - Browser-only localStorage generation history capped to the last 10 items.
 - Export generated concepts as TXT or JSON.
@@ -52,13 +55,17 @@ ffprobe -version
 app/
   api/
     assets/
+    clips/
     generate-script/
     render-reel/
   lib/
+    clips/
     ffmpeg/
     presets/
+    retention/
     render-settings/
     templates/
+  clips/
   page.tsx
 assets/
   footage/
@@ -71,8 +78,14 @@ Important modules:
 
 - `app/api/generate-script/route.ts`: single and batch AI generation.
 - `app/api/assets/route.ts`: local media asset listing.
+- `app/api/clips/analyze/route.ts`: source video analysis and clip candidate generation.
+- `app/api/clips/upload/route.ts`: local multipart source video uploads.
+- `app/api/clips/render/route.ts`: synchronous FFmpeg clip rendering.
 - `app/api/render-reel/route.ts`: FFmpeg render API.
 - `app/api/render-reel/file/[filename]/route.ts`: secure MP4 download route.
+- `app/clips/page.tsx`: minimal Clip Generator UI.
+- `app/lib/clips/clip-engine.ts`: deterministic clip candidate engine.
+- `app/lib/ffmpeg/clipper.ts`: source-video cutter and vertical MP4 exporter.
 - `app/lib/ffmpeg/renderer.ts`: vertical MP4 render pipeline.
 - `app/lib/presets/index.ts`: general-purpose preset definitions.
 - `app/lib/templates/index.ts`: reusable video templates.
@@ -86,10 +99,16 @@ Put optional background footage in:
 assets/footage/
 ```
 
+Clip Generator uploads are saved in:
+
+```text
+assets/footage/uploads/
+```
+
 Allowed footage extensions:
 
 ```text
-.mp4, .mov, .webm
+.mp4, .mov, .mkv, .webm
 ```
 
 Put optional music in:
@@ -141,9 +160,29 @@ Generated videos are saved to:
 outputs/
 ```
 
+## Clip Generator Workflow
+
+Open:
+
+```text
+http://localhost:3000/clips
+```
+
+1. Put source videos in `assets/footage/` or use an existing local MP4 from `outputs/`.
+2. Upload one or more videos, or drag them into the upload area.
+3. Select the active uploaded video.
+4. Choose a platform target and clip count.
+5. Click `Analyze Clips`.
+6. Render a selected candidate.
+7. Download the generated MP4.
+
+The Clip Generator is local-first and FFmpeg-only. Uploads stay on the local filesystem under `assets/footage/uploads/`. It uses ffprobe metadata and duration-based heuristics for now. Speech-to-text and transcript-aware clip selection are intentionally not included yet.
+
 ## Current Limitations
 
 - Rendering is synchronous and local to the running Next.js process.
+- Clip rendering is synchronous and local to the running Next.js process.
+- Clip analysis does not use speech-to-text or transcript scoring yet.
 - There is no queue, worker, Redis, database, auth, cloud upload, or SaaS account layer.
 - Preview is UI-level only; the renderer writes final MP4 files.
 - Long scripts can increase render time and reduce subtitle readability.

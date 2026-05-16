@@ -8,17 +8,21 @@ This roadmap keeps NoesaaID Reels Engine local-first while leaving room for futu
 - Keep batch generation stable.
 - Keep local asset manager stable.
 - Keep templates and render settings simple.
+- Keep the Retention Engine heuristic, local-first, and FFmpeg-only.
 - Keep download route locked to generated MP4 files.
 - Document setup, handoff, and known limits.
 - Add only small reliability fixes when they protect the current MVP.
 
 ## Phase 2: Preview Player and Render Library
 
+- Keep Clip Generator MVP local-first with duration-based segmentation.
 - Add a browser video preview for completed MP4 files.
 - Add a local render library view for recent outputs.
 - Show render metadata such as template, duration mode, quality, asset names, and created time.
+- Optionally show retention metadata such as scroll-stop score and loop-friendly ending.
 - Add a simple manual delete action for generated outputs.
 - Keep storage filesystem-only.
+- Add transcript-aware clip selection later, after the duration-based MVP is stable.
 
 ## Phase 3: Batch Render Queue
 

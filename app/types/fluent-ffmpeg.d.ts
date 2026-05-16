@@ -15,6 +15,27 @@ declare module "fluent-ffmpeg" {
   interface FfmpegFactory {
     (): FfmpegCommand;
     setFfmpegPath(path: string): void;
+    setFfprobePath(path: string): void;
+    ffprobe(
+      source: string,
+      callback: (error: Error | null, metadata: FfprobeData) => void
+    ): void;
+  }
+
+  interface FfprobeStream {
+    codec_type?: string;
+    width?: number;
+    height?: number;
+    duration?: number | string;
+  }
+
+  interface FfprobeFormat {
+    duration?: number | string;
+  }
+
+  interface FfprobeData {
+    format?: FfprobeFormat;
+    streams?: FfprobeStream[];
   }
 
   const ffmpeg: FfmpegFactory;

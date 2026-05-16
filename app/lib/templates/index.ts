@@ -1,5 +1,12 @@
 export type TextPosition = "upper" | "center" | "lower";
 export type Pacing = "fast" | "balanced" | "slow";
+export type MotionProfile =
+  | "zoomIn"
+  | "zoomOut"
+  | "slowPan"
+  | "punchZoom"
+  | "subtleShake"
+  | "none";
 
 export type ReelTemplate = {
   id: string;
@@ -31,6 +38,7 @@ export type ReelTemplate = {
   textPosition: TextPosition;
   accentColor: string;
   pacing: Pacing;
+  motionProfile: MotionProfile;
 };
 
 export const reelTemplates = [
@@ -64,6 +72,7 @@ export const reelTemplates = [
     textPosition: "lower",
     accentColor: "C7F542",
     pacing: "fast",
+    motionProfile: "punchZoom",
   },
   {
     id: "cinematic-dark",
@@ -95,6 +104,7 @@ export const reelTemplates = [
     textPosition: "center",
     accentColor: "E5E7EB",
     pacing: "slow",
+    motionProfile: "slowPan",
   },
   {
     id: "minimal-clean",
@@ -126,6 +136,7 @@ export const reelTemplates = [
     textPosition: "lower",
     accentColor: "38BDF8",
     pacing: "balanced",
+    motionProfile: "zoomIn",
   },
   {
     id: "aggressive-hype",
@@ -157,6 +168,7 @@ export const reelTemplates = [
     textPosition: "center",
     accentColor: "F97316",
     pacing: "fast",
+    motionProfile: "subtleShake",
   },
 ] satisfies ReelTemplate[];
 

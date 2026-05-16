@@ -18,6 +18,10 @@ import {
   subtitleSizeScale,
   type RenderSettings,
 } from "@/app/lib/render-settings";
+import {
+  buildRetentionPlan,
+  type RetentionPlan,
+} from "@/app/lib/retention";
 
 type RenderInput = {
   title?: string;
@@ -42,10 +46,16 @@ export async function renderReel(input: RenderInput) {
 
   const template = getTemplateById(input.templateId);
   const settings = normalizeRenderSettings(input);
+  const retentionPlan = buildRetentionPlan({
+    script: input.script,
+    template,
+    settings,
+  });
   const { scenes, duration } = buildSubtitleScenes(
     input.script,
     template,
-    settings
+    settings,
+    retentionPlan
   );
   const selectedFootage =
     (await resolveFootageFile(input.footageFile)) || (await findFirstFootage());
@@ -66,17 +76,40 @@ export async function renderReel(input: RenderInput) {
     : await writeFallbackBackground(tempDir);
 
   try {
-    await runRender({
-      outputPath,
-      duration,
-      selectedFootage,
-      selectedMusic,
-      fallbackImage,
-      scenes,
-      subtitleFiles,
-      template,
-      settings,
-    });
+    try {
+      await runRender({
+        outputPath,
+        duration,
+        selectedFootage,
+        selectedMusic,
+        fallbackImage,
+        scenes,
+        subtitleFiles,
+        template,
+        settings,
+        cinematicEnabled: true,
+        retentionPlan,
+      });
+    } catch (error) {
+      if (safeMotionProfile(template.motionProfile) === "none") {
+        throw error;
+      }
+
+      await rm(outputPath, { force: true });
+      await runRender({
+        outputPath,
+        duration,
+        selectedFootage,
+        selectedMusic,
+        fallbackImage,
+        scenes,
+        subtitleFiles,
+        template,
+        settings,
+        cinematicEnabled: false,
+        retentionPlan,
+      });
+    }
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }
@@ -92,6 +125,15 @@ export async function renderReel(input: RenderInput) {
     subtitleCount: scenes.length,
     templateId: template.id,
     templateName: template.name,
+    motionProfile: template.motionProfile,
+    retention: {
+      scrollStopScore: retentionPlan.scrollStopScore,
+      pacingProfile: retentionPlan.pacingProfile,
+      dopamineBeats: retentionPlan.dopamineBeats,
+      loopFriendlyEnding: retentionPlan.loopFriendlyEnding,
+      subtitleEmphasisPlan: retentionPlan.subtitleEmphasisPlan,
+      sceneCompositionHints: retentionPlan.sceneCompositionHints,
+    },
     settings,
   };
 }
@@ -106,6 +148,8 @@ async function runRender({
   subtitleFiles,
   template,
   settings,
+  cinematicEnabled,
+  retentionPlan,
 }: {
   outputPath: string;
   duration: number;
@@ -116,6 +160,8 @@ async function runRender({
   subtitleFiles: string[];
   template: ReelTemplate;
   settings: RenderSettings;
+  cinematicEnabled: boolean;
+  retentionPlan: RetentionPlan;
 }) {
   await new Promise<void>((resolve, reject) => {
     const command = ffmpeg();
@@ -137,7 +183,17 @@ async function runRender({
     const audioOptions = selectedMusic ? ["-map", "1:a", "-c:a", "aac", "-b:a", quality.audioBitrate] : ["-an"];
 
     command
-      .complexFilter(buildVideoFilters(scenes, subtitleFiles, template, duration, settings))
+      .complexFilter(
+        buildVideoFilters(
+          scenes,
+          subtitleFiles,
+          template,
+          duration,
+          settings,
+          cinematicEnabled,
+          retentionPlan
+        )
+      )
       .outputOptions([
         "-map",
         "[vout]",
@@ -180,7 +236,9 @@ function buildVideoFilters(
   subtitleFiles: string[],
   template: ReelTemplate,
   duration: number,
-  settings: RenderSettings
+  settings: RenderSettings,
+  cinematicEnabled: boolean,
+  retentionPlan: RetentionPlan
 ) {
   const subtitleY = textYExpression(template.textPosition);
   const fontFile = fontPath(template.fontStyle.weight);
@@ -189,10 +247,10 @@ function buildVideoFilters(
   const outroTextFile = toFilterPath(subtitleFiles[subtitleFiles.length - 1]);
   const style = safeTemplateStyle(template, settings);
   const filters = [
-    `[0:v]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},setsar=1,fps=${fps},format=rgba[base]`,
+    buildBaseVideoFilter(template, cinematicEnabled),
     `color=c=black@0.0:s=${width}x${height}:d=1,format=rgba,geq=r='0':g='0':b='0':a='if(gt(Y,H*0.48),${style.bottomOpacity}*(Y-H*0.48)/(H*0.52),${style.topOpacity})'[grad]`,
     `[base][grad]overlay=0:0,format=yuv420p,fade=t=in:st=0:d=${style.fadeIn},fade=t=out:st=${Math.max(0, duration - style.fadeOut)}:d=${style.fadeOut}[v0]`,
-    `[v0]drawtext=${fontOption}textfile='${introTextFile}':fontsize=46:fontcolor=${style.accentColor}:borderw=2:bordercolor=black@0.7:x=(w-text_w)/2:y=h*0.13:enable='between(t,0,${style.introDuration})'[vintro]`,
+    `[v0]drawtext=${fontOption}textfile='${introTextFile}':fontsize=${style.introFontSize}:fontcolor=${style.accentColor}:borderw=3:bordercolor=black@0.82:x=(w-text_w)/2:y=h*0.12:enable='between(t,0,${style.introDuration})'[vintro]`,
   ];
 
   let previousLabel = "vintro";
@@ -200,14 +258,34 @@ function buildVideoFilters(
   scenes.forEach((scene, index) => {
     const nextLabel = `v${index + 1}`;
     const textFile = toFilterPath(subtitleFiles[index]);
+    const impact = scene.isImpact;
+    const boostScale = 1 + scene.retentionBoost;
+    const emphasisScale =
+      scene.emphasis === "hook" ? 1.08 : scene.emphasis === "final" ? 1.04 : 1;
+    const fontSize = Math.round(
+      clampNumber(
+        (impact ? style.impactFontSize : style.fontSize) *
+          boostScale *
+          emphasisScale,
+        36,
+        108
+      )
+    );
+    const fontColor = impact ? style.accentColor : style.fontColor;
+    const borderWidth = clampNumber(
+      (impact ? style.borderWidth + 1 : style.borderWidth) +
+        Math.round(scene.retentionBoost * 3),
+      0,
+      10
+    );
     filters.push(
-      `[${previousLabel}]drawtext=${fontOption}textfile='${textFile}':fontsize=${style.fontSize}:fontcolor=${style.fontColor}:borderw=${style.borderWidth}:bordercolor=black@0.88:box=1:boxcolor=black@${style.boxOpacity}:boxborderw=24:line_spacing=${style.lineSpacing}:x=(w-text_w)/2:y=${subtitleY}:enable='between(t,${scene.start},${scene.end})'[${nextLabel}]`
+      `[${previousLabel}]drawtext=${fontOption}textfile='${textFile}':fontsize=${fontSize}:fontcolor=${fontColor}:borderw=${borderWidth}:bordercolor=black@0.9:box=1:boxcolor=black@${style.boxOpacity}:boxborderw=24:line_spacing=${style.lineSpacing}:x=(w-text_w)/2:y=${subtitleY}:enable='between(t,${scene.start},${scene.end})'[${nextLabel}]`
     );
     previousLabel = nextLabel;
   });
 
   filters.push(
-    `[${previousLabel}]drawtext=${fontOption}textfile='${outroTextFile}':fontsize=38:fontcolor=${style.accentColor}:borderw=2:bordercolor=black@0.75:x=(w-text_w)/2:y=h*0.82:enable='between(t,${Math.max(0, duration - 1.05)},${duration})'[vout]`
+    `[${previousLabel}]drawtext=${fontOption}textfile='${outroTextFile}':fontsize=38:fontcolor=${style.accentColor}:borderw=2:bordercolor=black@0.75:x=(w-text_w)/2:y=h*0.82:enable='between(t,${Math.max(0, duration - retentionPlan.pacingProfile.ctaHold)},${duration})'[vout]`
   );
 
   return filters;
@@ -215,10 +293,15 @@ function buildVideoFilters(
 
 function safeTemplateStyle(template: ReelTemplate, settings: RenderSettings) {
   const sizeScale = subtitleSizeScale[settings.subtitleSize];
+  const fontSize = Math.round(
+    clampNumber(template.subtitleStyle.fontSize * sizeScale, 36, 92)
+  );
 
   return {
-    fontSize: Math.round(
-      clampNumber(template.subtitleStyle.fontSize * sizeScale, 36, 92)
+    fontSize,
+    impactFontSize: Math.round(clampNumber(fontSize * 1.1, 40, 102)),
+    introFontSize: Math.round(
+      clampNumber(template.subtitleStyle.fontSize * 0.82, 42, 72)
     ),
     fontColor: safeColor(template.subtitleStyle.fontColor, "FFFFFF"),
     borderWidth: clampNumber(template.subtitleStyle.borderWidth, 0, 8),
@@ -231,6 +314,65 @@ function safeTemplateStyle(template: ReelTemplate, settings: RenderSettings) {
     introDuration: clampNumber(template.introStyle.duration, 0.2, 2.5),
     accentColor: safeColor(template.accentColor, "C7F542"),
   };
+}
+
+function buildBaseVideoFilter(
+  template: ReelTemplate,
+  cinematicEnabled: boolean
+) {
+  if (!cinematicEnabled) {
+    return `[0:v]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},setsar=1,fps=${fps},format=rgba[base]`;
+  }
+
+  const motionProfile = safeMotionProfile(template.motionProfile);
+  const polish = cinematicPolishFilter(template);
+
+  if (motionProfile === "zoomIn") {
+    return `[0:v]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},setsar=1,fps=${fps},zoompan=z='min(zoom+0.0009,1.12)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${width}x${height}:fps=${fps},${polish},format=rgba[base]`;
+  }
+
+  if (motionProfile === "zoomOut") {
+    return `[0:v]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},setsar=1,fps=${fps},zoompan=z='max(1.14-on*0.0009,1.0)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${width}x${height}:fps=${fps},${polish},format=rgba[base]`;
+  }
+
+  if (motionProfile === "punchZoom") {
+    return `[0:v]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},setsar=1,fps=${fps},zoompan=z='1+0.08*lt(mod(on,42),6)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${width}x${height}:fps=${fps},${polish},format=rgba[base]`;
+  }
+
+  if (motionProfile === "slowPan") {
+    return `[0:v]scale=1188:2112:force_original_aspect_ratio=increase,crop=${width}:${height}:x='(iw-${width})*(0.5+0.45*sin(t*0.18))':y='(ih-${height})*0.52',setsar=1,fps=${fps},${polish},format=rgba[base]`;
+  }
+
+  if (motionProfile === "subtleShake") {
+    return `[0:v]scale=1120:1988:force_original_aspect_ratio=increase,crop=${width}:${height}:x='(iw-${width})/2+8*sin(t*18)':y='(ih-${height})/2+5*cos(t*21)',setsar=1,fps=${fps},${polish},format=rgba[base]`;
+  }
+
+  return `[0:v]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},setsar=1,fps=${fps},${polish},format=rgba[base]`;
+}
+
+function cinematicPolishFilter(template: ReelTemplate) {
+  if (template.pacing === "fast") {
+    return "eq=contrast=1.12:saturation=1.12,vignette=PI/5,noise=alls=3:allf=t";
+  }
+
+  if (template.pacing === "slow") {
+    return "eq=contrast=1.08:saturation=0.94,vignette=PI/5,noise=alls=2:allf=t";
+  }
+
+  return "eq=contrast=1.05:saturation=1.04,vignette=PI/6,noise=alls=2:allf=t";
+}
+
+function safeMotionProfile(value: ReelTemplate["motionProfile"]) {
+  return [
+    "zoomIn",
+    "zoomOut",
+    "slowPan",
+    "punchZoom",
+    "subtleShake",
+    "none",
+  ].includes(value)
+    ? value
+    : "none";
 }
 
 function safeColor(value: string, fallback: string) {

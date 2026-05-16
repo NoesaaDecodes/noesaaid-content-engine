@@ -13,7 +13,6 @@ import {
   FileJson,
   FileVideo,
   FolderOpen,
-  Hash,
   History,
   Loader2,
   Megaphone,
@@ -91,6 +90,15 @@ type RenderResponse =
         subtitleCount: number;
         templateId: string;
         templateName: string;
+        motionProfile: string;
+        retention?: {
+          scrollStopScore: number;
+          pacingProfile: unknown;
+          dopamineBeats: unknown[];
+          loopFriendlyEnding: boolean;
+          subtitleEmphasisPlan: unknown[];
+          sceneCompositionHints: unknown[];
+        };
         settings: RenderSettings;
       };
     }
@@ -151,6 +159,23 @@ const resultTabs: Array<{ id: ResultTab; label: string }> = [
 
 const batchCounts = [3, 5, 10] as const;
 
+function readStoredHistory() {
+  try {
+    const stored = window.localStorage.getItem(historyStorageKey);
+    if (!stored) {
+      return [];
+    }
+
+    const parsed = JSON.parse(stored) as HistoryItem[];
+    return parsed.map((item) => ({
+      ...item,
+      form: normalizeFormState(item.form),
+    }));
+  } catch {
+    return [];
+  }
+}
+
 export default function Home() {
   const [form, setForm] = useState<FormState>(initialForm);
   const [result, setResult] = useState<GeneratedResult | null>(null);
@@ -179,20 +204,11 @@ export default function Home() {
   const selectedPreset = getClientPreset(form.presetId);
 
   useEffect(() => {
-    try {
-      const stored = window.localStorage.getItem(historyStorageKey);
-      if (stored) {
-        const parsed = JSON.parse(stored) as HistoryItem[];
-        setHistory(
-          parsed.map((item) => ({
-            ...item,
-            form: normalizeFormState(item.form),
-          }))
-        );
-      }
-    } catch {
-      setHistory([]);
+    function loadStoredHistory() {
+      setHistory(readStoredHistory());
     }
+
+    loadStoredHistory();
   }, []);
 
   useEffect(() => {
@@ -221,15 +237,33 @@ export default function Home() {
     loadAssets();
   }, []);
 
-  useEffect(() => {
+  function clearRenderState() {
     setRenderError(null);
     setRenderOutput(null);
-  }, [selectedFootage, selectedMusic, selectedTemplateId, renderSettings]);
+  }
+
+  function selectFootage(value: string) {
+    setSelectedFootage(value);
+    clearRenderState();
+  }
+
+  function selectMusic(value: string) {
+    setSelectedMusic(value);
+    clearRenderState();
+  }
+
+  function selectTemplate(value: string) {
+    setSelectedTemplateId(value);
+    clearRenderState();
+  }
+
+  function changeRenderSettings(value: RenderSettings) {
+    setRenderSettings(value);
+    clearRenderState();
+  }
 
   const scriptLines = useMemo(() => normalizeScript(result?.script), [result]);
   const hashtags = useMemo(() => normalizeHashtags(result?.hashtags), [result]);
-  const fullScriptText = useMemo(() => scriptLines.join("\n"), [scriptLines]);
-  const hashtagText = useMemo(() => hashtags.join(" "), [hashtags]);
   const exportPayload = useMemo(
     () => ({
       input: form,
@@ -738,18 +772,18 @@ export default function Home() {
               assetError={assetError}
               selectedFootage={selectedFootage}
               selectedMusic={selectedMusic}
-              onSelectFootage={setSelectedFootage}
-              onSelectMusic={setSelectedMusic}
+              onSelectFootage={selectFootage}
+              onSelectMusic={selectMusic}
             />
 
             <TemplatesPanel
               selectedTemplateId={selectedTemplateId}
-              onSelectTemplate={setSelectedTemplateId}
+              onSelectTemplate={selectTemplate}
             />
 
             <RenderSettingsPanel
               settings={renderSettings}
-              onChange={setRenderSettings}
+              onChange={changeRenderSettings}
             />
 
             <HistoryPanel history={history} onLoad={loadHistory} />
@@ -1420,13 +1454,13 @@ function TemplatesPanel({
               </div>
               <div className="mt-3 flex flex-wrap gap-2 text-xs text-zinc-300">
                 <span className="rounded-md bg-black/30 px-2 py-1">
+                  Motion: {motionLabel(template.motionProfile)}
+                </span>
+                <span className="rounded-md bg-black/30 px-2 py-1">
+                  Pacing: {template.pacing}
+                </span>
+                <span className="rounded-md bg-black/30 px-2 py-1">
                   {template.textPosition}
-                </span>
-                <span className="rounded-md bg-black/30 px-2 py-1">
-                  {template.pacing}
-                </span>
-                <span className="rounded-md bg-black/30 px-2 py-1">
-                  {template.fontStyle.weight}
                 </span>
               </div>
             </button>
@@ -1794,6 +1828,19 @@ function getClientPreset(presetId: string | undefined): ReelPreset {
     reelPresets.find((preset) => preset.id === defaultPresetId) ||
     reelPresets[0]
   );
+}
+
+function motionLabel(profile: string) {
+  const labels: Record<string, string> = {
+    zoomIn: "zoom in",
+    zoomOut: "zoom out",
+    slowPan: "slow pan",
+    punchZoom: "punch zoom",
+    subtleShake: "subtle shake",
+    none: "none",
+  };
+
+  return labels[profile] || "none";
 }
 
 function normalizeFormState(form: Partial<FormState>): FormState {

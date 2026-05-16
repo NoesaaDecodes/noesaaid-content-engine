@@ -11,7 +11,7 @@ export async function GET(
 ) {
   const { filename } = await params;
 
-  if (!/^ai-reel-\d{8}T\d{6}Z-[a-f0-9]{8}\.mp4$/.test(filename)) {
+  if (!/^ai-(?:reel|clip)-\d{8}T\d{6}Z-[a-f0-9]{8}\.mp4$/.test(filename)) {
     return NextResponse.json({ error: "Invalid filename" }, { status: 400 });
   }
 
