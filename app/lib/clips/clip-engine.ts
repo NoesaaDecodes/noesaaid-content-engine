@@ -12,7 +12,7 @@ import type {
 } from "./types";
 
 const minClipDuration = 15;
-const maxClipDuration = 45;
+const maxClipDuration = 60;
 const defaultTargetDuration = 30;
 
 export async function analyzeSourceVideo(

@@ -16,6 +16,7 @@ This roadmap keeps NoesaaID Reels Engine local-first while leaving room for futu
 ## Phase 2: Preview Player and Render Library
 
 - Keep Clip Generator MVP local-first with duration-based segmentation.
+- Keep one-click viral clip generation synchronous until render volume requires queueing.
 - Add a browser video preview for completed MP4 files.
 - Add a local render library view for recent outputs.
 - Show render metadata such as template, duration mode, quality, asset names, and created time.

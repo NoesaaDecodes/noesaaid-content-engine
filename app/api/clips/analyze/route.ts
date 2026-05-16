@@ -13,6 +13,7 @@ const AnalyzeClipsSchema = z.object({
     .default("generic"),
   maxClips: z.number().int().min(1).max(8).default(3),
   targetDuration: z.number().min(8).max(90).optional(),
+  templateId: z.string().max(120).optional(),
 });
 
 export async function POST(request: Request) {
@@ -53,6 +54,7 @@ export async function POST(request: Request) {
         platform: input.data.platform,
         maxClips: input.data.maxClips,
         targetDuration: input.data.targetDuration,
+        templateId: input.data.templateId,
       }
     );
 

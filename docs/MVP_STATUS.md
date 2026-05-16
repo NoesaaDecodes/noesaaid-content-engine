@@ -17,6 +17,7 @@ NoesaaID Reels Engine is integration-ready for local-first MVP use. The current 
 - Added lightweight local Retention Engine scoring for pacing, emphasis, rhythm, and CTA timing.
 - Added Clip Generator MVP for local source videos.
 - Added multi-file upload workflow for Clip Generator source videos.
+- Added one-click viral clip generation for top rendered clip candidates.
 - Added secure download route for generated MP4 files.
 - Added localStorage history capped to the last 10 generations.
 - Added TXT and JSON exports.
@@ -37,6 +38,7 @@ NoesaaID Reels Engine is integration-ready for local-first MVP use. The current 
 - Renderer exposes retention metadata including scroll-stop score, dopamine beats, loop ending hint, subtitle emphasis plan, and scene composition hints.
 - Clip analysis creates deterministic short-form candidates from local source video duration.
 - Clip upload saves supported videos under `assets/footage/uploads/`.
+- One-click clip generation analyzes and renders top candidates sequentially.
 - Clip rendering cuts local source videos into 1080x1920 MP4 outputs.
 
 ## Known Acceptable Risks

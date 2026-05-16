@@ -107,6 +107,7 @@ export async function POST(request: Request) {
       sourcePath: resolvedPath,
       candidate: input.data.candidate,
       settings: normalizeRenderSettings(input.data.settings || {}),
+      platform: input.data.candidate.platform,
     });
 
     return NextResponse.json({

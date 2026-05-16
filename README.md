@@ -15,6 +15,7 @@ The engine is general-purpose. NeedSport is included only as the first niche pre
 - 1080x1920 vertical MP4 rendering with subtitles.
 - Clip Generator MVP for local source videos.
 - Multi-file upload workflow for Clip Generator source videos.
+- One-click viral clip generation that analyzes and renders top clips sequentially.
 - Duration-based clip candidate scoring for Reels, TikTok, YouTube Shorts, and generic short-form output.
 - Secure MP4 download route restricted to generated output files.
 - Browser-only localStorage generation history capped to the last 10 items.
@@ -79,6 +80,7 @@ Important modules:
 - `app/api/generate-script/route.ts`: single and batch AI generation.
 - `app/api/assets/route.ts`: local media asset listing.
 - `app/api/clips/analyze/route.ts`: source video analysis and clip candidate generation.
+- `app/api/clips/generate/route.ts`: one-click analyze and render flow for top clip candidates.
 - `app/api/clips/upload/route.ts`: local multipart source video uploads.
 - `app/api/clips/render/route.ts`: synchronous FFmpeg clip rendering.
 - `app/api/render-reel/route.ts`: FFmpeg render API.
@@ -172,9 +174,8 @@ http://localhost:3000/clips
 2. Upload one or more videos, or drag them into the upload area.
 3. Select the active uploaded video.
 4. Choose a platform target and clip count.
-5. Click `Analyze Clips`.
-6. Render a selected candidate.
-7. Download the generated MP4.
+5. Click `Generate Viral Clips`.
+6. Preview, copy captions, and download the rendered clips.
 
 The Clip Generator is local-first and FFmpeg-only. Uploads stay on the local filesystem under `assets/footage/uploads/`. It uses ffprobe metadata and duration-based heuristics for now. Speech-to-text and transcript-aware clip selection are intentionally not included yet.
 

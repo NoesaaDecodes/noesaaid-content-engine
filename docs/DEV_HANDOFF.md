@@ -38,6 +38,12 @@ This project is a lightweight, local-first AI short-form video engine. The core 
   - Uses ffprobe duration metadata and deterministic heuristics.
   - Does not render output.
 
+- `POST /api/clips/generate`
+  - Accepts `sourcePath`, optional `platform`, and optional `maxClips`.
+  - Reuses clip analysis and FFmpeg clipping.
+  - Renders top candidates sequentially, defaulting to 3 clips with a hard cap of 5.
+  - Continues rendering remaining clips if one candidate fails.
+
 - `POST /api/clips/upload`
   - Accepts multipart video uploads using the `files` field.
   - Allows `.mp4`, `.mov`, `.mkv`, and `.webm`.
