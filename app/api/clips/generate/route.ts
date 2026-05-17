@@ -43,6 +43,7 @@ type GeneratedClip = {
   hashtags: string[];
   startTime: number;
   endTime: number;
+  words?: Array<{ word: string; start: number; end: number }>;
   error?: string;
 };
 
@@ -161,6 +162,7 @@ async function renderCandidate(
       hashtags: candidate.suggestedHashtags,
       startTime: candidate.startTime,
       endTime: candidate.endTime,
+      words: words || [],
     };
   } catch (error) {
     return {

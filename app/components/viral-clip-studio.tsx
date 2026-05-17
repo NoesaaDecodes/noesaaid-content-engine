@@ -11,6 +11,7 @@ import {
   FileVideo,
   Loader2,
   Scissors,
+  Sparkles,
   Subtitles,
   TrendingUp,
   Upload,
@@ -105,6 +106,7 @@ type ViralClip = {
   hashtags: string[];
   startTime: number;
   endTime: number;
+  words?: Array<{ word: string; start: number; end: number }>;
   error?: string;
 };
 
@@ -750,6 +752,24 @@ export function ViralClipStudio({
                             Copy Caption
                           </>
                         )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          sessionStorage.setItem(
+                            "studio-clip",
+                            JSON.stringify(clip)
+                          );
+                          sessionStorage.setItem(
+                            "studio-source",
+                            activeSourcePath
+                          );
+                          window.location.href = `/studio/${encodeURIComponent(clip.filename?.replace(".mp4", "") || "clip")}`;
+                        }}
+                        className="flex h-9 items-center justify-center gap-2 rounded-lg border border-cyan-400/30 bg-cyan-400/5 px-4 text-sm font-medium text-cyan-400 transition hover:bg-cyan-400/10"
+                      >
+                        <Sparkles className="size-3.5" />
+                        Studio
                       </button>
                     </div>
 

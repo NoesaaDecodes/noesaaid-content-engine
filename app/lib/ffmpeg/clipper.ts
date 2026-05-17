@@ -4,7 +4,16 @@ import {
   createClipOutputPath,
   ensureRenderDirectories,
 } from "@/app/lib/ffmpeg/assets";
-import { qualityOptions, type RenderSettings } from "@/app/lib/render-settings";
+import {
+  qualityOptions,
+  captionStyles,
+  captionFontSizes,
+  captionPositions,
+  defaultCaptionStyleParams,
+  type RenderSettings,
+  type CaptionStyleId,
+  type CaptionStyleParams,
+} from "@/app/lib/render-settings";
 import type { ClipCandidate } from "@/app/lib/clips";
 
 const fps = 30;
@@ -16,6 +25,10 @@ type ClipRenderInput = {
   customWidth?: number;
   customHeight?: number;
   words?: Array<{ word: string; start: number; end: number }>;
+  captionStyle?: CaptionStyleId;
+  captionStyleParams?: CaptionStyleParams;
+  staticHook?: string;
+  staticCaption?: string;
 };
 
 export async function renderClip({
@@ -25,6 +38,10 @@ export async function renderClip({
   customWidth,
   customHeight,
   words,
+  captionStyle,
+  captionStyleParams,
+  staticHook,
+  staticCaption,
 }: ClipRenderInput) {
   await ensureRenderDirectories();
 
@@ -52,6 +69,10 @@ export async function renderClip({
     dims,
     isVerticalSource,
     words,
+    captionStyle,
+    captionStyleParams,
+    staticHook,
+    staticCaption,
   });
 
   return {
@@ -96,6 +117,10 @@ async function runClipRender({
   dims,
   isVerticalSource,
   words,
+  captionStyle,
+  captionStyleParams,
+  staticHook,
+  staticCaption,
 }: {
   sourcePath: string;
   outputPath: string;
@@ -105,6 +130,10 @@ async function runClipRender({
   dims: { w: number; h: number };
   isVerticalSource: boolean;
   words?: Array<{ word: string; start: number; end: number }>;
+  captionStyle?: CaptionStyleId;
+  captionStyleParams?: CaptionStyleParams;
+  staticHook?: string;
+  staticCaption?: string;
 }) {
   const quality = qualityOptions[settings.quality];
   const { w, h } = dims;
@@ -120,13 +149,25 @@ async function runClipRender({
   const fontFile = getFontFile();
   const captionSize = Math.max(40, Math.min(64, Math.round(h * 0.036)));
 
-  const { filters: wordFilters, lastLabel } = buildWordCaptionFilters(
-    words || [],
-    startTime,
-    duration,
-    fontFile,
-    captionSize
-  );
+  const useStatic = !!(staticHook || staticCaption);
+  const { filters: textFilters, lastLabel } = useStatic
+    ? buildStaticCaptionFilters(
+        staticHook || "",
+        staticCaption || "",
+        duration,
+        fontFile,
+        captionSize,
+        captionStyleParams
+      )
+    : buildWordCaptionFilters(
+        words || [],
+        startTime,
+        duration,
+        fontFile,
+        captionSize,
+        captionStyle,
+        captionStyleParams
+      );
 
   const filters = [
     baseVideo,
@@ -137,7 +178,7 @@ async function runClipRender({
     `[vg4]drawbox=x=0:y=ih*0.77:w=iw:h=ih*0.08:color=black@0.22:t=fill[vg5]`,
     `[vg5]drawbox=x=0:y=ih*0.85:w=iw:h=ih*0.15:color=black@0.30:t=fill[vgrad]`,
     `[vgrad]format=yuv420p[vready]`,
-    ...wordFilters.map((f, i) => {
+    ...textFilters.map((f, i) => {
       if (i === 0) {
         return f.replace(`[vbase]`, `[vready]`);
       }
@@ -194,9 +235,15 @@ function buildWordCaptionFilters(
   clipStart: number,
   clipDuration: number,
   fontFile: string,
-  captionSize: number
+  captionSize: number,
+  styleId?: CaptionStyleId,
+  params?: CaptionStyleParams
 ): { filters: string[]; lastLabel: string } {
   if (!words.length) return { filters: [], lastLabel: "vready" };
+
+  const granular = params || defaultCaptionStyleParams;
+  const presetStyle = captionStyles[styleId || "classic"];
+  const useGranular = !!params;
 
   const clipEnd = clipStart + clipDuration;
   const overlapping = words
@@ -243,10 +290,133 @@ function buildWordCaptionFilters(
     const p = capped[i];
     const escaped = escapeDrawtextText(p.text);
     const nextLabel = `vcaption${i}`;
+    let shadow = "";
+    let border = "";
+    let fontSize = captionSize;
+    let fontColor = presetStyle.fontColor;
+    let yPos = "h*0.80";
+
+    if (useGranular) {
+      fontSize = captionFontSizes[granular.fontSize] || captionSize;
+      fontColor = granular.fontColor;
+      yPos = captionPositions[granular.position] || "h*0.80";
+
+      if (granular.background === "dark") {
+        shadow = `:shadowx=3:shadowy=3:shadowcolor=black@0.9`;
+        border = `:borderw=2:bordercolor=black@0.8`;
+      } else if (granular.background === "light") {
+        shadow = `:shadowx=2:shadowy=2:shadowcolor=white@0.6`;
+        border = `:borderw=1:bordercolor=white@0.4`;
+      }
+    } else {
+      shadow =
+        presetStyle.shadowX > 0 || presetStyle.shadowY > 0
+          ? `:shadowx=${presetStyle.shadowX}:shadowy=${presetStyle.shadowY}:shadowcolor=${presetStyle.shadowColor}`
+          : "";
+      border =
+        presetStyle.borderWidth > 0
+          ? `:borderw=${presetStyle.borderWidth}:bordercolor=${presetStyle.borderColor}`
+          : "";
+    }
+
     filters.push(
-      `[${prevLabel}]drawtext=${fontFile}text='${escaped}':fontsize=${captionSize}:fontcolor=#FFE600:shadowx=3:shadowy=3:shadowcolor=black@0.9:x='max(80,(w-text_w)/2)':y=h*0.80:enable='between(t,${p.start.toFixed(3)},${p.end.toFixed(3)})'[${nextLabel}]`
+      `[${prevLabel}]drawtext=${fontFile}text='${escaped}':fontsize=${fontSize}:fontcolor=${fontColor}${shadow}${border}:x='max(80,(w-text_w)/2)':y=${yPos}:enable='between(t,${p.start.toFixed(3)},${p.end.toFixed(3)})'[${nextLabel}]`
     );
     prevLabel = nextLabel;
+  }
+
+  return { filters, lastLabel: prevLabel };
+}
+
+function stripEmoji(text: string): string {
+  return text
+    .replace(/[\u{1F000}-\u{1FFFF}]/gu, "")
+    .replace(/[\u{2600}-\u{26FF}]/gu, "")
+    .replace(/[\u{2700}-\u{27BF}]/gu, "")
+    .replace(/[\u{FE00}-\u{FE0F}]/gu, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function splitCaptionLines(text: string): string[] {
+  const words = text.split(/\s+/).filter(Boolean);
+  if (!words.length) return [];
+
+  const lines: string[] = [];
+  let current: string[] = [];
+
+  for (const word of words) {
+    const candidate = current.length ? current.join(" ") + " " + word : word;
+    if (current.length >= 6 || candidate.length > 45) {
+      if (current.length) lines.push(current.join(" "));
+      current = [word];
+    } else {
+      current.push(word);
+    }
+  }
+  if (current.length) lines.push(current.join(" "));
+  return lines;
+}
+
+function buildStaticCaptionFilters(
+  hook: string,
+  caption: string,
+  clipDuration: number,
+  fontFile: string,
+  captionSize: number,
+  params?: CaptionStyleParams
+): { filters: string[]; lastLabel: string } {
+  const granular = params || defaultCaptionStyleParams;
+  const fontSize = captionFontSizes[granular.fontSize] || captionSize;
+  const fontColor = granular.fontColor;
+  const yPos = captionPositions[granular.position] || "h*0.80";
+
+  let shadow = "";
+  let border = "";
+  if (granular.background === "dark") {
+    shadow = `:shadowx=3:shadowy=3:shadowcolor=black@0.9`;
+    border = `:borderw=2:bordercolor=black@0.8`;
+  } else if (granular.background === "light") {
+    shadow = `:shadowx=2:shadowy=2:shadowcolor=white@0.6`;
+    border = `:borderw=1:bordercolor=white@0.4`;
+  }
+
+  const filters: string[] = [];
+  let prevLabel = "vready";
+  const hasHook = !!hook;
+
+  if (hasHook) {
+    const escaped = escapeDrawtextText(stripEmoji(hook));
+    const hookEnd = Math.min(3, clipDuration);
+    const label = "vhook";
+    filters.push(
+      `[${prevLabel}]drawtext=${fontFile}text='${escaped}':fontsize=${Math.round(fontSize * 1.15)}:fontcolor=${fontColor}${shadow}${border}:x='max(60,(w-text_w)/2)':y=${yPos}:enable='between(t,0,${hookEnd.toFixed(3)})'[${label}]`
+    );
+    prevLabel = label;
+  }
+
+  if (caption) {
+    const cleanCaption = stripEmoji(caption);
+    const lines = splitCaptionLines(cleanCaption);
+    if (lines.length) {
+      const captionStart = hasHook ? 3.0 : 0.0;
+      const captionDuration = Math.max(0.1, clipDuration - captionStart);
+      const lineDuration = captionDuration / lines.length;
+
+      for (let i = 0; i < lines.length; i++) {
+        const escaped = escapeDrawtextText(lines[i]);
+        const lineStart = captionStart + i * lineDuration;
+        const lineEnd = Math.min(
+          captionStart + (i + 1) * lineDuration,
+          clipDuration
+        );
+        const label = `vcaption${i}`;
+        filters.push(
+          `[${prevLabel}]drawtext=${fontFile}text='${escaped}':fontsize=${fontSize}:fontcolor=${fontColor}${shadow}${border}:x='max(60,(w-text_w)/2)':y=${yPos}:enable='between(t,${lineStart.toFixed(3)},${lineEnd.toFixed(3)})'[${label}]`
+        );
+        prevLabel = label;
+      }
+    }
   }
 
   return { filters, lastLabel: prevLabel };
@@ -273,7 +443,7 @@ function getFontFile(): string {
 }
 
 function escapeDrawtextText(text: string): string {
-  return text
+  return stripEmoji(text)
     .replace(/\\/g, "/")
     .replace(/:/g, " ")
     .replace(/'/g, "")
