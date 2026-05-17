@@ -369,7 +369,9 @@ function buildStaticCaptionFilters(
   const granular = params || defaultCaptionStyleParams;
   const fontSize = captionFontSizes[granular.fontSize] || captionSize;
   const fontColor = granular.fontColor;
-  const yPos = captionPositions[granular.position] || "h*0.80";
+  const captionY = captionPositions[granular.position] || "h*0.80";
+  const hookY =
+    captionPositions[granular.hookPosition || "top"] || "h*0.10";
 
   let shadow = "";
   let border = "";
@@ -390,7 +392,7 @@ function buildStaticCaptionFilters(
     const hookEnd = Math.min(3, clipDuration);
     const label = "vhook";
     filters.push(
-      `[${prevLabel}]drawtext=${fontFile}text='${escaped}':fontsize=${Math.round(fontSize * 1.15)}:fontcolor=${fontColor}${shadow}${border}:x='max(60,(w-text_w)/2)':y=${yPos}:enable='between(t,0,${hookEnd.toFixed(3)})'[${label}]`
+      `[${prevLabel}]drawtext=${fontFile}text='${escaped}':fontsize=${Math.round(fontSize * 1.15)}:fontcolor=${fontColor}${shadow}${border}:x='max(60,(w-text_w)/2)':y=${hookY}:enable='between(t,0,${hookEnd.toFixed(3)})'[${label}]`
     );
     prevLabel = label;
   }
@@ -401,18 +403,19 @@ function buildStaticCaptionFilters(
     if (lines.length) {
       const captionStart = hasHook ? 3.0 : 0.0;
       const captionDuration = Math.max(0.1, clipDuration - captionStart);
-      const lineDuration = captionDuration / lines.length;
+      const MAX_SEC = 5.0;
+      const timePerLine = Math.min(MAX_SEC, captionDuration / lines.length);
 
       for (let i = 0; i < lines.length; i++) {
         const escaped = escapeDrawtextText(lines[i]);
-        const lineStart = captionStart + i * lineDuration;
-        const lineEnd = Math.min(
-          captionStart + (i + 1) * lineDuration,
-          clipDuration
-        );
+        const lineStart = captionStart + i * timePerLine;
+        const isLast = i === lines.length - 1;
+        const lineEnd = isLast
+          ? clipDuration
+          : Math.min(captionStart + (i + 1) * timePerLine, clipDuration);
         const label = `vcaption${i}`;
         filters.push(
-          `[${prevLabel}]drawtext=${fontFile}text='${escaped}':fontsize=${fontSize}:fontcolor=${fontColor}${shadow}${border}:x='max(60,(w-text_w)/2)':y=${yPos}:enable='between(t,${lineStart.toFixed(3)},${lineEnd.toFixed(3)})'[${label}]`
+          `[${prevLabel}]drawtext=${fontFile}text='${escaped}':fontsize=${fontSize}:fontcolor=${fontColor}${shadow}${border}:x='max(60,(w-text_w)/2)':y=${captionY}:enable='between(t,${lineStart.toFixed(3)},${lineEnd.toFixed(3)})'[${label}]`
         );
         prevLabel = label;
       }

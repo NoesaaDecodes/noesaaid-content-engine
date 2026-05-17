@@ -568,6 +568,29 @@ export default function StudioClient() {
                 ))}
               </div>
             </div>
+
+            {/* Hook Position Row */}
+            <div>
+              <p className="mb-2 text-[11px] font-medium text-zinc-500">
+                Posisi Hook
+              </p>
+              <div className="flex gap-2">
+                {positionOptions.map((opt) => (
+                  <button
+                    key={`hook-${opt.value}`}
+                    type="button"
+                    onClick={() => updateStyle("hookPosition", opt.value)}
+                    className={`rounded-lg border px-4 py-2 text-xs font-medium transition ${
+                      (styleParams.hookPosition || "top") === opt.value
+                        ? "border-cyan-400/50 bg-cyan-400/10 text-cyan-400"
+                        : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:border-zinc-700"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         </motion.div>
 

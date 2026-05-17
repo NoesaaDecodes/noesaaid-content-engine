@@ -52,6 +52,7 @@ const StudioRenderSchema = z.object({
       fontSize: z.enum(["small", "medium", "large"]),
       background: z.enum(["dark", "light", "none"]),
       position: z.enum(["top", "center", "bottom"]),
+      hookPosition: z.enum(["top", "center", "bottom"]).optional(),
     })
     .optional(),
   customWidth: z.number().int().min(256).max(3840).optional(),

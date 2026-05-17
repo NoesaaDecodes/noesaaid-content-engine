@@ -60,6 +60,7 @@ export type CaptionStyleParams = {
   fontSize: CaptionFontSize;
   background: CaptionBackground;
   position: CaptionPosition;
+  hookPosition: CaptionPosition;
 };
 
 export const defaultCaptionStyleParams: CaptionStyleParams = {
@@ -67,6 +68,7 @@ export const defaultCaptionStyleParams: CaptionStyleParams = {
   fontSize: "medium",
   background: "dark",
   position: "bottom",
+  hookPosition: "top",
 };
 
 export const captionFontSizes: Record<CaptionFontSize, number> = {
