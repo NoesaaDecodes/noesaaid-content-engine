@@ -89,7 +89,8 @@ export async function POST(request: Request) {
         maxClips,
         targetDuration: input.data.targetDuration,
         templateId: input.data.templateId,
-      }
+      },
+      words
     );
     const candidates = analysis.candidates
       .slice()

@@ -29,6 +29,8 @@ type ClipRenderInput = {
   captionStyleParams?: CaptionStyleParams;
   staticHook?: string;
   staticCaption?: string;
+  musicPath?: string;
+  musicVolume?: number;
 };
 
 export async function renderClip({
@@ -42,6 +44,8 @@ export async function renderClip({
   captionStyleParams,
   staticHook,
   staticCaption,
+  musicPath,
+  musicVolume,
 }: ClipRenderInput) {
   await ensureRenderDirectories();
 
@@ -59,6 +63,7 @@ export async function renderClip({
 
   const sourceDims = await probeVideoDimensions(sourcePath);
   const isVerticalSource = sourceDims.h > sourceDims.w;
+  const hasAudio = await probeHasAudio(sourcePath);
 
   await runClipRender({
     sourcePath,
@@ -68,11 +73,14 @@ export async function renderClip({
     settings,
     dims,
     isVerticalSource,
+    hasAudio,
     words,
     captionStyle,
     captionStyleParams,
     staticHook,
     staticCaption,
+    musicPath,
+    musicVolume,
   });
 
   return {
@@ -108,6 +116,23 @@ async function probeVideoDimensions(
   });
 }
 
+async function probeHasAudio(sourcePath: string): Promise<boolean> {
+  configureFfprobePath();
+
+  return new Promise((resolve) => {
+    ffmpeg.ffprobe(sourcePath, (error, metadata) => {
+      if (error) {
+        resolve(false);
+        return;
+      }
+      const hasAudio = metadata.streams?.some(
+        (s) => s.codec_type === "audio"
+      );
+      resolve(!!hasAudio);
+    });
+  });
+}
+
 async function runClipRender({
   sourcePath,
   outputPath,
@@ -116,11 +141,14 @@ async function runClipRender({
   settings,
   dims,
   isVerticalSource,
+  hasAudio,
   words,
   captionStyle,
   captionStyleParams,
   staticHook,
   staticCaption,
+  musicPath,
+  musicVolume,
 }: {
   sourcePath: string;
   outputPath: string;
@@ -129,11 +157,14 @@ async function runClipRender({
   settings: RenderSettings;
   dims: { w: number; h: number };
   isVerticalSource: boolean;
+  hasAudio: boolean;
   words?: Array<{ word: string; start: number; end: number }>;
   captionStyle?: CaptionStyleId;
   captionStyleParams?: CaptionStyleParams;
   staticHook?: string;
   staticCaption?: string;
+  musicPath?: string;
+  musicVolume?: number;
 }) {
   const quality = qualityOptions[settings.quality];
   const { w, h } = dims;
@@ -169,6 +200,22 @@ async function runClipRender({
         captionStyleParams
       );
 
+  const vol = clampNumber(musicVolume ?? 30, 0, 100) / 100;
+
+  const audioFilters: string[] = [];
+  if (musicPath && hasAudio) {
+    audioFilters.push(
+      `[1:a]atrim=0:${duration},asetpts=PTS-STARTPTS,volume=${vol.toFixed(2)}[music]`
+    );
+    audioFilters.push(
+      `[0:a][music]amix=inputs=2:duration=first:dropout_transition=0[aout]`
+    );
+  } else if (musicPath && !hasAudio) {
+    audioFilters.push(
+      `[1:a]atrim=0:${duration},asetpts=PTS-STARTPTS,volume=${vol.toFixed(2)}[aout]`
+    );
+  }
+
   const filters = [
     baseVideo,
     `[vbase]drawbox=x=0:y=ih*0.45:w=iw:h=ih*0.08:color=black@0.03:t=fill[vg1]`,
@@ -185,20 +232,30 @@ async function runClipRender({
       return f;
     }),
     `[${lastLabel}]drawbox=x=0:y=ih-6:w=iw*t/${duration}:h=6:color=cyan@0.85:t=fill:enable='${progressEnable}'[vout]`,
+    ...audioFilters,
   ];
+
+  const audioMap = musicPath ? ["-map", "[aout]"] : ["-map", "0:a?"];
+
+  console.log("[MUSIC] musicPath:", musicPath, "musicVolume:", musicVolume, "hasAudio:", hasAudio, "vol:", vol, "audioFilters:", audioFilters.length, "audioMap:", audioMap);
 
   await new Promise<void>((resolve, reject) => {
     configureFfmpegPath();
 
-    ffmpeg()
+    const cmd = ffmpeg()
       .input(sourcePath)
-      .inputOptions(["-ss", Math.max(0, startTime).toString()])
+      .inputOptions(["-ss", Math.max(0, startTime).toString()]);
+
+    if (musicPath) {
+      cmd.input(musicPath);
+    }
+
+    cmd
       .complexFilter(filters)
       .outputOptions([
         "-map",
         "[vout]",
-        "-map",
-        "0:a?",
+        ...audioMap,
         "-t",
         duration.toString(),
         "-r",
@@ -469,4 +526,8 @@ function configureFfprobePath() {
 
 function roundTime(value: number) {
   return Math.round(value * 100) / 100;
+}
+
+function clampNumber(value: number, min: number, max: number) {
+  return Math.min(max, Math.max(min, value));
 }

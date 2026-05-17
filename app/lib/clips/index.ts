@@ -3,6 +3,7 @@ export {
   normalizeClipOptions,
   probeVideoDuration,
 } from "./clip-engine";
+export type { TranscriptWord } from "./clip-engine";
 export type {
   ClipAspectMode,
   ClipCandidate,

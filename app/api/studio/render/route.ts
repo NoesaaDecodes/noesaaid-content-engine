@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { renderClip } from "@/app/lib/ffmpeg/clipper";
 import { resolveSourceVideoPath } from "@/app/lib/ffmpeg/source-video";
+import { resolveMusicFile } from "@/app/lib/ffmpeg/assets";
 import {
   normalizeRenderSettings,
   captionStyleIds,
@@ -59,6 +60,8 @@ const StudioRenderSchema = z.object({
   customHeight: z.number().int().min(256).max(3840).optional(),
   hook: z.string().max(200).optional(),
   caption: z.string().max(500).optional(),
+  musicPath: z.string().max(200).optional(),
+  musicVolume: z.number().min(0).max(100).optional(),
 });
 
 export async function POST(request: Request) {
@@ -129,6 +132,14 @@ export async function POST(request: Request) {
       );
     }
 
+    let resolvedMusic: string | undefined;
+    if (parsed.data.musicPath) {
+      const musicFile = await resolveMusicFile(parsed.data.musicPath);
+      if (musicFile) {
+        resolvedMusic = musicFile;
+      }
+    }
+
     const output = await renderClip({
       sourcePath: resolvedPath,
       candidate,
@@ -139,6 +150,8 @@ export async function POST(request: Request) {
       captionStyleParams: captionStyleParams as CaptionStyleParams | undefined,
       staticHook: hook ? stripEmoji(hook) : undefined,
       staticCaption: caption ? stripEmoji(caption) : undefined,
+      musicPath: resolvedMusic,
+      musicVolume: parsed.data.musicVolume,
     });
 
     return NextResponse.json({

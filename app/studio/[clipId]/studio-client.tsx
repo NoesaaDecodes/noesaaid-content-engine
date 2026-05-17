@@ -19,6 +19,7 @@ import {
   type CaptionPosition,
 } from "@/app/lib/render-settings";
 import EmojiPicker from "@/app/components/emoji-picker";
+import MusicPicker from "@/app/components/music-picker";
 
 type ClipData = {
   filename: string | null;
@@ -107,6 +108,8 @@ export default function StudioClient() {
   const [renderStep, setRenderStep] = useState("");
   const [error, setError] = useState("");
   const [aiSuccess, setAiSuccess] = useState(false);
+  const [selectedMusicFile, setSelectedMusicFile] = useState<string | null>(null);
+  const [musicVolume, setMusicVolume] = useState(30);
 
   const hookRef = useRef<HTMLInputElement>(null);
   const captionRef = useRef<HTMLTextAreaElement>(null);
@@ -239,6 +242,8 @@ export default function StudioClient() {
           captionStyleParams: styleParams,
           hook,
           caption,
+          musicPath: selectedMusicFile ?? undefined,
+          musicVolume: selectedMusicFile ? musicVolume : undefined,
         }),
       });
 
@@ -592,6 +597,21 @@ export default function StudioClient() {
               </div>
             </div>
           </div>
+        </motion.div>
+
+        {/* Music Picker */}
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.22 }}
+          className="mt-8"
+        >
+          <MusicPicker
+            selectedFilename={selectedMusicFile}
+            volume={musicVolume}
+            onSelect={setSelectedMusicFile}
+            onVolumeChange={setMusicVolume}
+          />
         </motion.div>
 
         {/* Error */}

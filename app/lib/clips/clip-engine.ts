@@ -15,9 +15,17 @@ const minClipDuration = 15;
 const maxClipDuration = 60;
 const defaultTargetDuration = 30;
 
+export type TranscriptWord = {
+  word: string;
+  start: number;
+  end: number;
+  probability?: number;
+};
+
 export async function analyzeSourceVideo(
   source: SourceVideoInput,
-  options: ClipGenerationOptions
+  options: ClipGenerationOptions,
+  words?: TranscriptWord[]
 ): Promise<ClipGenerationResult> {
   const duration = source.duration || (await probeVideoDuration(source.resolvedPath || source.sourcePath));
   const safeDuration = roundTime(duration);
@@ -29,7 +37,8 @@ export async function analyzeSourceVideo(
   const normalizedOptions = normalizeClipOptions(options);
   const candidates = buildClipCandidates(
     safeDuration,
-    normalizedOptions
+    normalizedOptions,
+    words
   ).slice(0, normalizedOptions.maxClips);
 
   return {
@@ -96,7 +105,8 @@ export function normalizeClipOptions(
 
 function buildClipCandidates(
   sourceDuration: number,
-  options: ClipGenerationOptions
+  options: ClipGenerationOptions,
+  words?: TranscriptWord[]
 ): ClipCandidate[] {
   const targetDuration = options.targetDuration || defaultTargetDuration;
   const windowDuration = clampNumber(
@@ -123,12 +133,16 @@ function buildClipCandidates(
         template,
         settings: defaultRenderSettings,
       });
+      const clipWords = words
+        ? words.filter((w) => w.end > startTime && w.start < endTime)
+        : undefined;
       const score = scoreCandidate({
         startTime,
         duration,
         sourceDuration,
         platform: options.platform,
         retentionScore: retentionPlan.scrollStopScore,
+        words: clipWords,
       });
 
       return {
@@ -174,25 +188,33 @@ function buildAnchors(sourceDuration: number, windowDuration: number) {
   );
 }
 
+const hookKeywords = [
+  "watch", "look", "did you", "guess what", "this is", "you won",
+  "tahu", "lihat", "coba", "gak nyangka", "ternyata", "ini dia",
+  "rahasia", "trik", "tips", "jangan", "pernah", "wajib",
+];
+
 function scoreCandidate({
   startTime,
   duration,
   sourceDuration,
   platform,
   retentionScore,
+  words,
 }: {
   startTime: number;
   duration: number;
   sourceDuration: number;
   platform: ClipPlatformTarget;
   retentionScore: number;
+  words?: TranscriptWord[];
 }) {
   const conciseScore = 1 - Math.min(1, Math.abs(duration - platformDefaultDuration(platform)) / 24);
   const earlyBias = startTime <= sourceDuration * 0.2 ? 1 : 0.55;
   const loopBias = startTime + duration >= sourceDuration * 0.82 ? 0.82 : 0.55;
   const platformFit = duration >= 15 && duration <= 45 ? 1 : 0.5;
   const firstThreeSeconds = startTime < sourceDuration * 0.12 ? 1 : 0.68;
-  const score =
+  const baseScore =
     conciseScore * 24 +
     earlyBias * 18 +
     loopBias * 12 +
@@ -200,7 +222,67 @@ function scoreCandidate({
     firstThreeSeconds * 14 +
     (retentionScore / 100) * 14;
 
-  return Math.round(clampNumber(score, 35, 96));
+  if (!words || words.length === 0) {
+    return Math.round(clampNumber(baseScore, 35, 96));
+  }
+
+  let transcriptBonus = 0;
+
+  // 1. Speech energy (0-20pts)
+  const totalSpeechTime = words.reduce(
+    (sum, w) => sum + (w.end - w.start),
+    0
+  );
+  const wps = totalSpeechTime > 0 ? words.length / totalSpeechTime : 0;
+  if (wps > 3) transcriptBonus += 10;
+  const probs = words.filter((w) => w.probability != null);
+  if (probs.length > 0) {
+    const avgProb =
+      probs.reduce((sum, w) => sum + (w.probability ?? 0), 0) / probs.length;
+    if (avgProb > 0.8) transcriptBonus += 10;
+  } else {
+    transcriptBonus += 10;
+  }
+
+  // 2. Pacing variety (0-15pts)
+  const gaps: number[] = [];
+  for (let i = 1; i < words.length; i++) {
+    gaps.push(words[i].start - words[i - 1].end);
+  }
+  const hasShort = gaps.some((g) => g < 2);
+  const hasLong = gaps.some((g) => g > 4);
+  if (hasShort && hasLong) transcriptBonus += 15;
+
+  // 3. Silence ratio penalty (-20pts max)
+  const speechDuration = totalSpeechTime;
+  const silenceDuration = Math.max(0, duration - speechDuration);
+  const silenceRatio = duration > 0 ? silenceDuration / duration : 0;
+  if (silenceRatio > 0.4) transcriptBonus -= 20;
+  else if (silenceRatio > 0.2) transcriptBonus -= 10;
+
+  // 4. Opening strength (0-25pts)
+  const firstWordStart = words[0].start - startTime;
+  if (firstWordStart <= 2) transcriptBonus += 15;
+  const firstSegmentText = words
+    .slice(0, 5)
+    .map((w) => w.word.toLowerCase())
+    .join(" ");
+  const hasHook = hookKeywords.some((kw) => firstSegmentText.includes(kw));
+  if (hasHook) transcriptBonus += 10;
+
+  // 5. Momentum (0-20pts)
+  const midPoint = startTime + duration / 2;
+  const firstHalfWords = words.filter(
+    (w) => w.start < midPoint
+  ).length;
+  const secondHalfWords = words.filter(
+    (w) => w.start >= midPoint
+  ).length;
+  if (secondHalfWords > firstHalfWords) transcriptBonus += 20;
+  else if (secondHalfWords === firstHalfWords) transcriptBonus += 10;
+
+  const finalScore = baseScore + transcriptBonus;
+  return Math.round(clampNumber(finalScore, 0, 100));
 }
 
 function reasonForCandidate(segment: string, duration: number, score: number) {
