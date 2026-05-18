@@ -22,6 +22,7 @@ import {
 } from "@/app/lib/render-settings";
 import EmojiPicker from "@/app/components/emoji-picker";
 import MusicPicker from "@/app/components/music-picker";
+import { showToast } from "@/app/components/toast";
 
 type ClipData = {
   filename: string | null;
@@ -290,8 +291,11 @@ function insertAtCursor(
 
       setFinalUrl(data.output.downloadUrl);
       setRenderStep("Done!");
+      showToast("Render selesai!", "success");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Render failed.");
+      const msg = err instanceof Error ? err.message : "Render failed.";
+      setError(msg);
+      showToast(msg, "error");
     } finally {
       window.clearTimeout(stepTimer);
       setIsRendering(false);
@@ -521,8 +525,11 @@ function insertAtCursor(
 
             {/* Hook */}
             <div>
-              <label className="mb-1 block text-[11px] font-medium uppercase text-zinc-500">
+              <label className="mb-1 flex items-center justify-between text-[11px] font-medium uppercase text-zinc-500">
                 Hook
+                <span className={hook.length > 70 ? "text-amber-400" : "text-zinc-600"}>
+                  {hook.length}/80
+                </span>
               </label>
               <input
                 ref={hookRef}
@@ -547,8 +554,11 @@ function insertAtCursor(
 
             {/* Caption */}
             <div>
-              <label className="mb-1 block text-[11px] font-medium uppercase text-zinc-500">
+              <label className="mb-1 flex items-center justify-between text-[11px] font-medium uppercase text-zinc-500">
                 Caption
+                <span className={caption.length > 250 ? "text-amber-400" : "text-zinc-600"}>
+                  {caption.length}/300
+                </span>
               </label>
               <textarea
                 ref={captionRef}
@@ -842,6 +852,11 @@ function insertAtCursor(
                 </>
               )}
             </button>
+            {!isRendering ? (
+              <p className="text-center text-[10px] text-zinc-600">
+                Estimasi render ~15-25 detik
+              </p>
+            ) : null}
 
           </motion.div>
         </div>

@@ -48,6 +48,24 @@ function readHistory(): HistoryEntry[] {
 export default function HistoryPage() {
   const [entries] = useState<HistoryEntry[]>(readHistory);
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [filter, setFilter] = useState<"all" | "today" | "week">("all");
+
+  const now = new Date();
+  const weekAgo = now.getTime() - 7 * 86400000;
+
+  const filtered = entries.filter((e) => {
+    if (search && !e.sourceFilename.toLowerCase().includes(search.toLowerCase())) return false;
+    if (filter === "today") {
+      const d = new Date(e.generatedAt);
+      return d.toDateString() === now.toDateString();
+    }
+    if (filter === "week") {
+      const d = new Date(e.generatedAt);
+      return d.getTime() > weekAgo;
+    }
+    return true;
+  });
 
   return (
     <div className="mx-auto max-w-5xl px-6 py-16">
@@ -61,25 +79,56 @@ export default function HistoryPage() {
         </p>
       </div>
 
-      {entries.length === 0 ? (
+      {/* Search + Filter */}
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center">
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Cari history..."
+          className="h-9 flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 text-sm text-white outline-none transition focus:border-cyan-400/50"
+        />
+        <div className="flex gap-1.5">
+          {(["all", "today", "week"] as const).map((f) => (
+            <button
+              key={f}
+              type="button"
+              onClick={() => setFilter(f)}
+              className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+                filter === f
+                  ? "bg-cyan-400/10 text-cyan-400"
+                  : "bg-zinc-900 text-zinc-500 hover:text-zinc-300"
+              }`}
+            >
+              {f === "all" ? "Semua" : f === "today" ? "Hari ini" : "Minggu ini"}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {filtered.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-2xl border border-zinc-800 py-20 text-center">
           <Clock className="mb-4 size-10 text-zinc-700" />
           <p className="text-base font-medium text-zinc-400">
-            No history yet
+            {search || filter !== "all" ? "Tidak ditemukan" : "Belum ada history"}
           </p>
           <p className="mt-1 text-sm text-zinc-600">
-            Generate your first clips from the home page.
+            {search || filter !== "all"
+              ? "Coba kata kunci atau filter lain."
+              : "Generate klip pertama dari halaman utama."}
           </p>
-          <Link
-            href="/"
-            className="mt-4 inline-flex h-9 items-center gap-2 rounded-lg bg-cyan-400 px-4 text-sm font-medium text-black transition hover:bg-cyan-300"
-          >
-            Go to home
-          </Link>
+          {!search && filter === "all" ? (
+            <Link
+              href="/"
+              className="mt-4 inline-flex h-9 items-center gap-2 rounded-lg bg-cyan-400 px-4 text-sm font-medium text-black transition hover:bg-cyan-300"
+            >
+              Go to home
+            </Link>
+          ) : null}
         </div>
       ) : (
         <div className="space-y-4">
-          {entries.map((entry, index) => {
+          {filtered.map((entry, index) => {
             const isExpanded = expandedId === entry.id;
 
             return (

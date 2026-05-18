@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Loader2, Trash2, FolderOpen } from "lucide-react";
+import { Loader2, Trash2, FolderOpen, RotateCcw } from "lucide-react";
+import { showToast } from "@/app/components/toast";
 
 const settingsKey = "noesaaid_settings";
 const historyKey = "noesaaid_history";
@@ -10,12 +11,20 @@ type AppSettings = {
   quality: string;
   maxClips: number;
   targetDuration: number;
+  defaultEffect: string;
+  defaultColor: string;
+  defaultSize: string;
+  defaultPosition: string;
 };
 
 const defaults: AppSettings = {
   quality: "standard",
   maxClips: 3,
   targetDuration: 30,
+  defaultEffect: "fade",
+  defaultColor: "#FFE600",
+  defaultSize: "medium",
+  defaultPosition: "bottom",
 };
 
 function readSettings(): AppSettings {
@@ -43,6 +52,13 @@ export default function SettingsPage() {
     const next = { ...settings, [key]: value };
     setSettings(next);
     saveSettings(next);
+    showToast("Pengaturan disimpan", "success");
+  }
+
+  function resetDefaults() {
+    setSettings(defaults);
+    saveSettings(defaults);
+    showToast("Pengaturan direset ke default", "info");
   }
 
   async function clearOutputs() {
@@ -168,6 +184,80 @@ export default function SettingsPage() {
           {clearMessage ? (
             <p className="text-xs text-zinc-500">{clearMessage}</p>
           ) : null}
+        </div>
+      </section>
+
+      {/* Studio Defaults */}
+      <section className="mb-8">
+        <h2 className="mb-4 text-xs font-semibold uppercase tracking-widest text-zinc-500">
+          Studio Defaults
+        </h2>
+        <div className="space-y-4 rounded-xl border border-zinc-800 bg-zinc-950 p-5">
+          <SettingRow label="Default effect">
+            <select
+              value={settings.defaultEffect}
+              onChange={(e) => update("defaultEffect", e.target.value)}
+              className="h-10 rounded-lg border border-zinc-800 bg-zinc-900 px-3 text-sm text-white outline-none focus:border-cyan-400/50"
+            >
+              {["fade", "pop", "slide-up", "karaoke", "bounce", "punch"].map((e) => (
+                <option key={e} value={e}>{e}</option>
+              ))}
+            </select>
+          </SettingRow>
+          <SettingRow label="Default color">
+            <div className="flex items-center gap-2">
+              {["#FFE600", "#FFFFFF", "#00FFFF", "#FF8C00", "#FF69B4"].map((c) => (
+                <button
+                  key={c}
+                  type="button"
+                  onClick={() => update("defaultColor", c)}
+                  className={`size-7 rounded-md border transition ${
+                    settings.defaultColor === c
+                      ? "border-cyan-400/60 bg-cyan-400/15"
+                      : "border-zinc-800 bg-zinc-900 hover:border-zinc-700"
+                  }`}
+                >
+                  <span className="mx-auto block size-3 rounded-full" style={{ backgroundColor: c }} />
+                </button>
+              ))}
+            </div>
+          </SettingRow>
+          <SettingRow label="Default size">
+            <select
+              value={settings.defaultSize}
+              onChange={(e) => update("defaultSize", e.target.value)}
+              className="h-10 rounded-lg border border-zinc-800 bg-zinc-900 px-3 text-sm text-white outline-none focus:border-cyan-400/50"
+            >
+              {["small", "medium", "large"].map((s) => (
+                <option key={s} value={s}>{s}</option>
+              ))}
+            </select>
+          </SettingRow>
+          <SettingRow label="Default position">
+            <select
+              value={settings.defaultPosition}
+              onChange={(e) => update("defaultPosition", e.target.value)}
+              className="h-10 rounded-lg border border-zinc-800 bg-zinc-900 px-3 text-sm text-white outline-none focus:border-cyan-400/50"
+            >
+              {["top", "center", "bottom"].map((p) => (
+                <option key={p} value={p}>{p}</option>
+              ))}
+            </select>
+          </SettingRow>
+        </div>
+      </section>
+
+      {/* Reset */}
+      <section className="mb-8">
+        <div className="rounded-xl border border-zinc-800 bg-zinc-950 p-5">
+          <button
+            type="button"
+            onClick={resetDefaults}
+            className="inline-flex h-9 items-center gap-2 rounded-lg border border-zinc-800 px-3 text-xs text-zinc-400 transition hover:border-amber-500/30 hover:text-amber-400"
+          >
+            <RotateCcw className="size-3" />
+            Reset ke default
+          </button>
         </div>
       </section>
 

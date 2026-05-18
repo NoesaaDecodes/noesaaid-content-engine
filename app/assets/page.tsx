@@ -25,6 +25,8 @@ export default function AssetsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [deleting, setDeleting] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
+  const [sort, setSort] = useState<"newest" | "oldest" | "largest">("newest");
 
   async function deleteAsset(filename: string) {
     setDeleting(filename);
@@ -87,6 +89,33 @@ export default function AssetsPage() {
         </Link>
       </div>
 
+      {/* Search + Sort */}
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center">
+        <input
+          type="text"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder="Cari video..."
+          className="h-9 flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 text-sm text-white outline-none transition focus:border-cyan-400/50"
+        />
+        <div className="flex gap-1.5">
+          {(["newest", "oldest", "largest"] as const).map((s) => (
+            <button
+              key={s}
+              type="button"
+              onClick={() => setSort(s)}
+              className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+                sort === s
+                  ? "bg-cyan-400/10 text-cyan-400"
+                  : "bg-zinc-900 text-zinc-500 hover:text-zinc-300"
+              }`}
+            >
+              {s === "newest" ? "Terbaru" : s === "oldest" ? "Terlama" : "Terbesar"}
+            </button>
+          ))}
+        </div>
+      </div>
+
       {error ? (
         <div className="mb-6 rounded-xl border border-red-500/20 bg-red-500/5 px-5 py-4 text-sm text-red-300">
           {error}
@@ -102,14 +131,22 @@ export default function AssetsPage() {
             />
           ))}
         </div>
-      ) : assets.length === 0 ? (
+      ) : (() => {
+        const filtered = assets
+          .filter((a) => !search || a.originalName.toLowerCase().includes(search.toLowerCase()))
+          .sort((a, b) => {
+            if (sort === "newest") return b.uploadedAt.localeCompare(a.uploadedAt);
+            if (sort === "oldest") return a.uploadedAt.localeCompare(b.uploadedAt);
+            return b.size - a.size;
+          });
+        return filtered.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-2xl border border-zinc-800 py-20 text-center">
           <FileVideo className="mb-4 size-10 text-zinc-700" />
           <p className="text-base font-medium text-zinc-400">
-            No videos yet
+            Belum ada video
           </p>
           <p className="mt-1 text-sm text-zinc-600">
-            Upload one from the home page.
+            Upload video dari halaman utama.
           </p>
           <Link
             href="/"
@@ -120,7 +157,7 @@ export default function AssetsPage() {
         </div>
       ) : (
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {assets.map((asset, index) => (
+          {filtered.map((asset, index) => (
             <motion.article
               key={asset.filename}
               initial={{ opacity: 0, y: 12 }}
@@ -170,7 +207,8 @@ export default function AssetsPage() {
             </motion.article>
           ))}
         </div>
-      )}
+        );
+      })()}
     </div>
   );
 }

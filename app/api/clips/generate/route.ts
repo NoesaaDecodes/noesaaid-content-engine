@@ -19,7 +19,7 @@ export const maxDuration = 120;
 const GenerateClipsSchema = z.object({
   sourcePath: z.string().trim().min(1).max(500),
   platform: z.enum(["reels", "tiktok", "shorts", "generic"]).default("reels"),
-  maxClips: z.number().int().min(1).max(5).default(3),
+  maxClips: z.number().int().min(1).max(10).default(3),
   targetDuration: z.number().min(8).max(90).optional(),
   templateId: z.string().max(120).optional(),
   customWidth: z.number().int().min(256).max(3840).optional(),
@@ -97,19 +97,25 @@ export async function POST(request: Request) {
       .slice()
       .sort((left, right) => right.score - left.score)
       .slice(0, maxClips);
+
+    const batchSize = 3;
     const clips: GeneratedClip[] = [];
 
-    for (const candidate of candidates) {
-      clips.push(
-        await renderCandidate(
-          resolvedPath,
-          candidate,
-          settings,
-          input.data.customWidth,
-          input.data.customHeight,
-          words
+    for (let i = 0; i < candidates.length; i += batchSize) {
+      const batch = candidates.slice(i, i + batchSize);
+      const results = await Promise.all(
+        batch.map((candidate) =>
+          renderCandidate(
+            resolvedPath,
+            candidate,
+            settings,
+            input.data.customWidth,
+            input.data.customHeight,
+            words
+          )
         )
       );
+      clips.push(...results);
     }
 
     return NextResponse.json({

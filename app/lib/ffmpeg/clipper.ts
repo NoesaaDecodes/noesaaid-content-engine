@@ -34,6 +34,7 @@ type ClipRenderInput = {
   musicPath?: string;
   musicVolume?: number;
   captionEffect?: CaptionEffect;
+  smartCrop?: boolean;
 };
 
 export async function renderClip({
@@ -50,6 +51,7 @@ export async function renderClip({
   musicPath,
   musicVolume,
   captionEffect,
+  smartCrop,
 }: ClipRenderInput) {
   await ensureRenderDirectories();
 
@@ -87,6 +89,7 @@ export async function renderClip({
     musicPath,
     musicVolume,
     captionEffect,
+    smartCrop,
   });
 
   console.log("[RENDER TIME]", Date.now() - t0, "ms");
@@ -158,6 +161,7 @@ async function runClipRender({
   musicPath,
   musicVolume,
   captionEffect,
+  smartCrop,
 }: {
   sourcePath: string;
   outputPath: string;
@@ -175,11 +179,16 @@ async function runClipRender({
   musicPath?: string;
   musicVolume?: number;
   captionEffect?: CaptionEffect;
+  smartCrop?: boolean;
 }) {
   const quality = qualityOptions[settings.quality];
   const isDraft = settings.quality === "draft";
   const w = isDraft ? Math.min(dims.w, 720) : dims.w;
   const h = isDraft ? Math.min(dims.h, 1280) : dims.h;
+
+  if (smartCrop && !isDraft) {
+    console.log("[SMART CROP] requested — using center crop (cropdetect not yet implemented)");
+  }
 
   const scalePad = `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps=${fps}`;
 

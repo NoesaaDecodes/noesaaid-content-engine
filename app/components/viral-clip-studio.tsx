@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, DragEvent, useEffect, useState } from "react";
+import { ChangeEvent, DragEvent, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -19,6 +19,7 @@ import {
   X,
 } from "lucide-react";
 import { defaultTemplateId } from "@/app/lib/templates";
+import { showToast } from "@/app/components/toast";
 
 const settingsKey = "noesaaid_settings";
 const historyKey = "noesaaid_history";
@@ -163,6 +164,33 @@ export function ViralClipStudio({
     return () => clearInterval(id);
   }, [isGenerating]);
 
+  const actionRef = useRef<{ generate: () => void; startOver: () => void }>({
+    generate: () => {},
+    startOver: () => {},
+  });
+
+  useEffect(() => {
+    actionRef.current.generate = () => {
+      if (!isGenerating && activeVideo) void generate();
+    };
+    actionRef.current.startOver = startOver;
+  });
+
+  useEffect(() => {
+    function handleKey(e: KeyboardEvent) {
+      if (e.ctrlKey && e.key === "g") {
+        e.preventDefault();
+        actionRef.current.generate();
+      }
+      if (e.ctrlKey && e.key === "r") {
+        e.preventDefault();
+        actionRef.current.startOver();
+      }
+    }
+    window.addEventListener("keydown", handleKey);
+    return () => window.removeEventListener("keydown", handleKey);
+  }, []);
+
   async function uploadFiles(files: FileList | File[]) {
     const selected = Array.from(files).slice(0, 5);
     if (selected.length === 0) return;
@@ -265,6 +293,7 @@ export function ViralClipStudio({
 
       setClips(data.clips);
       setGenerateStep("Selesai!");
+      showToast(`${data.clips.length} klip berhasil dibuat!`, "success");
 
       saveToHistory({
         sourcePath: activeVideo.sourcePath,
@@ -323,6 +352,7 @@ export function ViralClipStudio({
     const text = `${clip.caption}\n\n${clip.hashtags.join(" ")}`;
     if (navigator.clipboard) {
       await navigator.clipboard.writeText(text);
+      showToast("Caption + hashtags disalin!", "success");
     }
     setCopiedClipKey(`${clip.startTime}-${index}`);
     window.setTimeout(() => setCopiedClipKey(""), 2000);
@@ -480,28 +510,30 @@ export function ViralClipStudio({
             {/* Platform Selector */}
             {hasUploads ? (
               <div className="space-y-3">
-                <div className="flex flex-wrap justify-center gap-2">
+                <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
                   {[
-                    { id: "reels", label: "Reels", dims: "1080×1920" },
-                    { id: "tiktok", label: "TikTok", dims: "1080×1920" },
-                    { id: "youtube", label: "YouTube", dims: "1920×1080" },
-                    { id: "square", label: "Square", dims: "1080×1080" },
-                    { id: "custom", label: "Custom", dims: "Set size" },
+                    { id: "reels", label: "Reels", dims: "9:16", w: 16, h: 28 },
+                    { id: "tiktok", label: "TikTok", dims: "9:16", w: 16, h: 28 },
+                    { id: "youtube", label: "YouTube", dims: "16:9", w: 28, h: 16 },
+                    { id: "square", label: "Square", dims: "1:1", w: 22, h: 22 },
+                    { id: "custom", label: "Custom", dims: "Free", w: 22, h: 22 },
                   ].map((p) => (
                     <button
                       key={p.id}
                       type="button"
                       onClick={() => setPlatform(p.id)}
-                      className={`flex flex-col items-center rounded-lg border px-4 py-2 text-xs transition ${
+                      className={`flex flex-col items-center gap-1.5 rounded-lg border px-3 py-2.5 text-xs transition ${
                         platform === p.id
                           ? "border-cyan-400/50 bg-cyan-400/10 text-cyan-400"
                           : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:border-zinc-700"
                       }`}
                     >
+                      <div
+                        className="rounded-sm border border-current"
+                        style={{ width: p.w, height: p.h }}
+                      />
                       <span className="font-medium">{p.label}</span>
-                      <span className="mt-0.5 text-[10px] text-zinc-500">
-                        {p.dims}
-                      </span>
+                      <span className="text-[10px] text-zinc-600">{p.dims}</span>
                     </button>
                   ))}
                 </div>
@@ -545,9 +577,9 @@ export function ViralClipStudio({
               <div className="flex gap-1">
                 {(
                   [
-                    { id: "auto", label: "Auto" },
-                    { id: "id", label: "ID" },
-                    { id: "en", label: "EN" },
+                    { id: "auto", label: "🌐 Auto" },
+                    { id: "id", label: "🇮🇩 ID" },
+                    { id: "en", label: "🇺🇸 EN" },
                   ] as const
                 ).map((l) => (
                   <button
@@ -566,6 +598,33 @@ export function ViralClipStudio({
               </div>
             </div>
 
+            {/* Clips Count Selector */}
+            <div className="flex items-center justify-center gap-2">
+              <span className="text-xs text-zinc-500">Clips</span>
+              <div className="flex gap-1">
+                {[3, 5, 10].map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => {
+                      const next = { ...settings, maxClips: n };
+                      localStorage.setItem(settingsKey, JSON.stringify(next));
+                    }}
+                    className={`rounded-md border px-3 py-1 text-xs transition ${
+                      settings.maxClips === n
+                        ? "border-cyan-400/50 bg-cyan-400/10 text-cyan-400"
+                        : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:border-zinc-700"
+                    }`}
+                  >
+                    {n}
+                  </button>
+                ))}
+              </div>
+              {settings.maxClips >= 10 ? (
+                <span className="text-[10px] text-amber-400">~5 min</span>
+              ) : null}
+            </div>
+
             {/* Generate Button */}
             {hasUploads ? (
               <motion.div
@@ -577,7 +636,7 @@ export function ViralClipStudio({
                   type="button"
                   disabled={isGenerating || isUploading || !activeVideo}
                   onClick={generate}
-                  className="mt-1 flex h-12 w-full items-center justify-center gap-2.5 rounded-xl bg-white text-[18px] font-semibold text-black transition hover:bg-zinc-200 disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500"
+                  className={`mt-1 flex h-12 w-full items-center justify-center gap-2.5 rounded-xl bg-white text-[18px] font-semibold text-black transition hover:bg-zinc-200 disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500 ${!isGenerating && !isUploading && activeVideo ? "animate-pulse" : ""}`}
                 >
                   {isGenerating ? (
                     <>
@@ -591,6 +650,9 @@ export function ViralClipStudio({
                     </>
                   )}
                 </button>
+                <p className="mt-2 text-center text-[10px] text-zinc-600">
+                  Ctrl+G to generate · Ctrl+R to reset
+                </p>
               </motion.div>
             ) : null}
           </div>
