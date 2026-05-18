@@ -478,7 +478,7 @@ export function ViralClipStudio({
             {/* Platform Selector */}
             {hasUploads ? (
               <div className="space-y-3">
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap justify-center gap-2">
                   {[
                     { id: "reels", label: "Reels", dims: "1080×1920" },
                     { id: "tiktok", label: "TikTok", dims: "1080×1920" },
@@ -538,7 +538,7 @@ export function ViralClipStudio({
             ) : null}
 
             {/* Language Selector */}
-            <div className="flex items-center gap-2">
+            <div className="flex items-center justify-center gap-2">
               <span className="text-xs text-zinc-500">Captions</span>
               <div className="flex gap-1">
                 {(

@@ -8,7 +8,9 @@ import {
   Download,
   Lightbulb,
   Loader2,
+  Music,
   Play,
+  RotateCcw,
 } from "lucide-react";
 import {
   defaultCaptionStyleParams,
@@ -62,35 +64,40 @@ type GenerateScriptResponse =
       detail?: string;
     };
 
-const fontColorOptions: Array<{
-  value: CaptionFontColor;
-  label: string;
-  dot: string;
-}> = [
-  { value: "#FFE600", label: "Yellow", dot: "#FFE600" },
-  { value: "#FFFFFF", label: "White", dot: "#FFFFFF" },
-  { value: "#00FFFF", label: "Cyan", dot: "#00FFFF" },
+const fontColors: Array<{ value: CaptionFontColor; dot: string }> = [
+  { value: "#FFFFFF", dot: "#FFFFFF" },
+  { value: "#FFE600", dot: "#FFE600" },
+  { value: "#00FFFF", dot: "#00FFFF" },
+  { value: "#FF8C00", dot: "#FF8C00" },
+  { value: "#FF69B4", dot: "#FF69B4" },
 ];
 
-const fontSizeOptions: Array<{ value: CaptionFontSize; label: string }> = [
-  { value: "small", label: "Small" },
-  { value: "medium", label: "Medium" },
-  { value: "large", label: "Large" },
+const fontSizeOpts: Array<{ value: CaptionFontSize; label: string }> = [
+  { value: "small", label: "S" },
+  { value: "medium", label: "M" },
+  { value: "large", label: "L" },
 ];
 
-const backgroundOptions: Array<{
+const backgroundOpts: Array<{
   value: CaptionBackground;
   label: string;
 }> = [
-  { value: "dark", label: "Dark" },
-  { value: "light", label: "Light" },
   { value: "none", label: "None" },
+  { value: "dark", label: "Dark" },
+  { value: "light", label: "Blur" },
 ];
 
-const positionOptions: Array<{ value: CaptionPosition; label: string }> = [
-  { value: "top", label: "Top" },
-  { value: "center", label: "Center" },
-  { value: "bottom", label: "Bottom" },
+const positionOpts: Array<{ value: CaptionPosition; icon: string }> = [
+  { value: "top", icon: "↑" },
+  { value: "center", icon: "↕" },
+  { value: "bottom", icon: "↓" },
+];
+
+const effectOpts = [
+  { value: "fade" as const, label: "Fade" },
+  { value: "pop" as const, label: "Pop" },
+  { value: "slide-up" as const, label: "Slide↑" },
+  { value: "karaoke" as const, label: "Karaoke" },
 ];
 
 export default function StudioClient() {
@@ -102,14 +109,21 @@ export default function StudioClient() {
   const [styleParams, setStyleParams] = useState<CaptionStyleParams>(
     defaultCaptionStyleParams
   );
-  const [videoUrl, setVideoUrl] = useState("");
+  const [originalUrl, setOriginalUrl] = useState("");
+  const [finalUrl, setFinalUrl] = useState("");
   const [isGeneratingAI, setIsGeneratingAI] = useState(false);
   const [isRendering, setIsRendering] = useState(false);
   const [renderStep, setRenderStep] = useState("");
   const [error, setError] = useState("");
   const [aiSuccess, setAiSuccess] = useState(false);
-  const [selectedMusicFile, setSelectedMusicFile] = useState<string | null>(null);
+  const [selectedMusicFile, setSelectedMusicFile] = useState<string | null>(
+    null
+  );
   const [musicVolume, setMusicVolume] = useState(30);
+  const [musicEnabled, setMusicEnabled] = useState(false);
+  const [captionEffect, setCaptionEffect] = useState<
+    "fade" | "pop" | "slide-up" | "karaoke"
+  >("fade");
 
   const hookRef = useRef<HTMLInputElement>(null);
   const captionRef = useRef<HTMLTextAreaElement>(null);
@@ -127,7 +141,7 @@ export default function StudioClient() {
       const parsed = JSON.parse(stored) as ClipData;
       setClip(parsed);
       setSourcePath(storedSource);
-      setVideoUrl(parsed.previewUrl || parsed.downloadUrl || "");
+      setOriginalUrl(parsed.downloadUrl || parsed.previewUrl || "");
     } catch {
       window.location.href = "/clips";
     }
@@ -242,8 +256,9 @@ export default function StudioClient() {
           captionStyleParams: styleParams,
           hook,
           caption,
-          musicPath: selectedMusicFile ?? undefined,
-          musicVolume: selectedMusicFile ? musicVolume : undefined,
+          musicPath: musicEnabled ? (selectedMusicFile ?? undefined) : undefined,
+          musicVolume: musicEnabled ? musicVolume : undefined,
+          captionEffect,
         }),
       });
 
@@ -255,7 +270,7 @@ export default function StudioClient() {
         );
       }
 
-      setVideoUrl(data.output.downloadUrl);
+      setFinalUrl(data.output.downloadUrl);
       setRenderStep("Done!");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Render failed.");
@@ -302,29 +317,64 @@ export default function StudioClient() {
         </motion.div>
 
         {/* Main Layout */}
-        <div className="grid gap-6 lg:grid-cols-[45%_1fr]">
-          {/* Video Preview */}
+        <div
+          className={`grid gap-6 ${finalUrl ? "lg:grid-cols-[55%_1fr]" : "lg:grid-cols-[45%_1fr]"}`}
+        >
+          {/* Video Comparison */}
           <motion.div
             initial={{ opacity: 0, x: -16 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ delay: 0.1 }}
-            className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950"
+            className="space-y-3"
           >
-            {videoUrl ? (
-              <video
-                src={videoUrl}
-                autoPlay
-                muted
-                loop
-                playsInline
-                className="aspect-[9/16] w-full bg-black object-contain"
-              />
-            ) : (
-              <div className="flex aspect-[9/16] items-center justify-center bg-black">
-                <p className="text-sm text-zinc-600">No video</p>
+            <div
+              className={`grid gap-3 ${finalUrl ? "grid-cols-1 sm:grid-cols-2" : "grid-cols-1"}`}
+            >
+              {/* Original */}
+              <div className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950">
+                <div className="relative">
+                  {originalUrl ? (
+                    <video
+                      src={originalUrl}
+                      autoPlay
+                      muted
+                      loop
+                      playsInline
+                      className="aspect-[9/16] w-full bg-black object-contain"
+                    />
+                  ) : (
+                    <div className="flex aspect-[9/16] items-center justify-center bg-black">
+                      <p className="text-sm text-zinc-600">No video</p>
+                    </div>
+                  )}
+                  <span className="absolute left-2 top-2 rounded-md bg-zinc-900/80 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-zinc-300 backdrop-blur-sm">
+                    Original
+                  </span>
+                </div>
               </div>
-            )}
-            <div className="flex items-center justify-between border-t border-zinc-800 px-4 py-3">
+
+              {/* Final — only shown after render */}
+              {finalUrl ? (
+                <div className="overflow-hidden rounded-xl border border-cyan-400/30 bg-zinc-950">
+                  <div className="relative">
+                    <video
+                      src={finalUrl}
+                      autoPlay
+                      muted
+                      loop
+                      playsInline
+                      className="aspect-[9/16] w-full bg-black object-contain"
+                    />
+                    <span className="absolute left-2 top-2 rounded-md bg-cyan-400/90 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-black backdrop-blur-sm">
+                      Final
+                    </span>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+
+            {/* Clip info bar */}
+            <div className="flex items-center justify-between rounded-lg border border-zinc-800 bg-zinc-950 px-4 py-2.5">
               <div className="flex items-center gap-2">
                 <span className="rounded-md bg-zinc-800 px-1.5 py-0.5 text-[10px] font-medium text-zinc-400 uppercase">
                   {clip.platform || "reels"}
@@ -346,6 +396,42 @@ export default function StudioClient() {
                 {clip.score}
               </span>
             </div>
+
+            {/* Action buttons — shown after render */}
+            {finalUrl && !isRendering ? (
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="flex flex-wrap items-center gap-2"
+              >
+                <a
+                  href={finalUrl}
+                  download
+                  className="inline-flex items-center gap-2 rounded-lg bg-cyan-400 px-5 py-2.5 text-xs font-semibold text-black transition hover:bg-cyan-300"
+                >
+                  <Download className="size-3.5" />
+                  Download Final
+                </a>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFinalUrl("");
+                    void generateFinalClip();
+                  }}
+                  className="inline-flex items-center gap-2 rounded-lg border border-zinc-700 bg-zinc-900 px-5 py-2.5 text-xs font-medium text-zinc-300 transition hover:border-zinc-600 hover:text-white"
+                >
+                  <RotateCcw className="size-3.5" />
+                  Generate Again
+                </button>
+                <Link
+                  href="/clips"
+                  className="inline-flex items-center gap-2 rounded-lg border border-zinc-800 bg-zinc-950 px-5 py-2.5 text-xs font-medium text-zinc-500 transition hover:border-zinc-700 hover:text-zinc-300"
+                >
+                  <ArrowLeft className="size-3.5" />
+                  Back to clips
+                </Link>
+              </motion.div>
+            ) : null}
           </motion.div>
 
           {/* Right Panel — Script Editor */}
@@ -353,33 +439,30 @@ export default function StudioClient() {
             initial={{ opacity: 0, x: 16 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ delay: 0.15 }}
-            className="space-y-5"
+            className="space-y-4"
           >
             <div>
               <h2 className="text-lg font-semibold text-white">
                 {clip.title}
               </h2>
-              <p className="mt-1 text-xs text-zinc-500">
-                Edit your clip script and regenerate with custom caption styling
-              </p>
             </div>
 
-            {/* 1. AI Generate Button — TOP */}
+            {/* AI Generate Button */}
             <button
               type="button"
               disabled={isGeneratingAI}
               onClick={() => void generateWithAI()}
-              className="flex h-11 w-full items-center justify-center gap-2 rounded-xl border border-cyan-400/30 bg-cyan-400/5 text-sm font-medium text-cyan-400 transition hover:bg-cyan-400/10 disabled:cursor-not-allowed disabled:opacity-50"
+              className="flex h-10 w-full items-center justify-center gap-2 rounded-lg border border-cyan-400/30 bg-cyan-400/5 text-xs font-medium text-cyan-400 transition hover:bg-cyan-400/10 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {isGeneratingAI ? (
                 <>
-                  <Loader2 className="size-4 animate-spin" />
+                  <Loader2 className="size-3.5 animate-spin" />
                   Generating...
                 </>
               ) : (
                 <>
-                  <Lightbulb className="size-4" />
-                  Butuh ide konten? Generate dengan AI
+                  <Lightbulb className="size-3.5" />
+                  Generate with AI
                 </>
               )}
             </button>
@@ -389,15 +472,15 @@ export default function StudioClient() {
               <motion.div
                 initial={{ opacity: 0, y: -4 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-4 py-2.5 text-xs text-emerald-400"
+                className="rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-3 py-2 text-[11px] text-emerald-400"
               >
-                Ide dari AI sudah diisi. Edit sesuai kebutuhanmu.
+                AI content generated. Edit as needed.
               </motion.div>
             ) : null}
 
-            {/* 2. Hook + char counter */}
+            {/* Hook */}
             <div>
-              <label className="mb-1.5 block text-xs font-medium text-zinc-400">
+              <label className="mb-1 block text-[11px] font-medium uppercase text-zinc-500">
                 Hook
               </label>
               <input
@@ -406,24 +489,19 @@ export default function StudioClient() {
                 value={hook}
                 onChange={(e) => setHook(e.target.value)}
                 maxLength={80}
-                placeholder="Attention-grabbing opening line..."
-                className="h-11 w-full rounded-xl border border-zinc-800 bg-zinc-950 px-4 text-sm text-white outline-none transition focus:border-cyan-400/50"
+                placeholder="Opening line..."
+                className="h-9 w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 text-xs text-white outline-none transition focus:border-cyan-400/50"
               />
-              <p className="mt-1 text-right text-[11px] text-zinc-600">
-                {hook.length}/80
-              </p>
+              <EmojiPicker
+                onSelect={(char) =>
+                  insertAtCursor(hookRef, char, setHook, hook)
+                }
+              />
             </div>
 
-            {/* 3. Emoji picker below hook */}
-            <EmojiPicker
-              onSelect={(char) =>
-                insertAtCursor(hookRef, char, setHook, hook)
-              }
-            />
-
-            {/* 4. Caption + char counter */}
+            {/* Caption */}
             <div>
-              <label className="mb-1.5 block text-xs font-medium text-zinc-400">
+              <label className="mb-1 block text-[11px] font-medium uppercase text-zinc-500">
                 Caption
               </label>
               <textarea
@@ -431,244 +509,291 @@ export default function StudioClient() {
                 value={caption}
                 onChange={(e) => setCaption(e.target.value)}
                 maxLength={300}
-                placeholder="Write a compelling caption..."
-                rows={4}
-                className="w-full rounded-xl border border-zinc-800 bg-zinc-950 px-4 py-3 text-sm text-white outline-none transition focus:border-cyan-400/50"
+                placeholder="Write a caption..."
+                rows={3}
+                className="w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 py-2 text-xs text-white outline-none transition focus:border-cyan-400/50"
               />
-              <p className="mt-1 text-right text-[11px] text-zinc-600">
-                {caption.length}/300
-              </p>
+              <EmojiPicker
+                onSelect={(char) =>
+                  insertAtCursor(captionRef, char, setCaption, caption)
+                }
+              />
             </div>
 
-            {/* 5. Emoji picker below caption */}
-            <EmojiPicker
-              onSelect={(char) =>
-                insertAtCursor(captionRef, char, setCaption, caption)
-              }
-            />
-
-            {/* 6. Hashtags */}
+            {/* Hashtags */}
             <div>
-              <label className="mb-1.5 block text-xs font-medium text-zinc-400">
+              <label className="mb-1 block text-[11px] font-medium uppercase text-zinc-500">
                 Hashtags
               </label>
               <input
                 type="text"
                 value={hashtags}
                 onChange={(e) => setHashtags(e.target.value)}
-                placeholder="#football, #futsal, #jersey"
-                className="h-11 w-full rounded-xl border border-zinc-800 bg-zinc-950 px-4 text-sm text-white outline-none transition focus:border-cyan-400/50"
+                placeholder="#football, #futsal"
+                className="h-9 w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 text-xs text-white outline-none transition focus:border-cyan-400/50"
               />
-              <p className="mt-1 text-[11px] text-zinc-600">
-                Comma-separated
-              </p>
             </div>
+
+            {/* === Compact Style Controls === */}
+            <div className="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950">
+              <div className="space-y-3 p-3">
+                {/* Color */}
+                <div>
+                  <p className="mb-1.5 text-[11px] font-medium uppercase text-zinc-500">
+                    Color
+                  </p>
+                  <div className="flex gap-1.5">
+                    {fontColors.map((c) => (
+                      <button
+                        key={c.value}
+                        type="button"
+                        onClick={() => updateStyle("fontColor", c.value)}
+                        className={`size-7 rounded-md border transition ${
+                          styleParams.fontColor === c.value
+                            ? "border-cyan-400/60 bg-cyan-400/15"
+                            : "border-zinc-800 bg-zinc-900 hover:border-zinc-700"
+                        }`}
+                      >
+                        <span
+                          className="mx-auto block size-3 rounded-full"
+                          style={{ backgroundColor: c.dot }}
+                        />
+                      </button>
+                    ))}
+                    <input
+                      type="text"
+                      value={styleParams.fontColor}
+                      onChange={(e) =>
+                        updateStyle(
+                          "fontColor",
+                          e.target.value as CaptionFontColor
+                        )
+                      }
+                      className="h-7 w-16 rounded-md border border-zinc-800 bg-zinc-900 px-1.5 text-[10px] text-zinc-400 outline-none transition focus:border-cyan-400/50"
+                      maxLength={7}
+                    />
+                  </div>
+                </div>
+
+                {/* Size */}
+                <div>
+                  <p className="mb-1.5 text-[11px] font-medium uppercase text-zinc-500">
+                    Size
+                  </p>
+                  <div className="flex gap-1.5">
+                    {fontSizeOpts.map((o) => (
+                      <button
+                        key={o.value}
+                        type="button"
+                        onClick={() => updateStyle("fontSize", o.value)}
+                        className={`h-7 min-w-8 rounded-md border px-3 text-[11px] font-medium transition ${
+                          styleParams.fontSize === o.value
+                            ? "border-cyan-400/60 bg-cyan-400/15 text-cyan-400"
+                            : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:border-zinc-700"
+                        }`}
+                      >
+                        {o.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Background */}
+                <div>
+                  <p className="mb-1.5 text-[11px] font-medium uppercase text-zinc-500">
+                    Background
+                  </p>
+                  <div className="flex gap-1.5">
+                    {backgroundOpts.map((o) => (
+                      <button
+                        key={o.value}
+                        type="button"
+                        onClick={() => updateStyle("background", o.value)}
+                        className={`h-7 rounded-md border px-3 text-[11px] font-medium transition ${
+                          styleParams.background === o.value
+                            ? "border-cyan-400/60 bg-cyan-400/15 text-cyan-400"
+                            : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:border-zinc-700"
+                        }`}
+                      >
+                        {o.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Caption Position */}
+                <div>
+                  <p className="mb-1.5 text-[11px] font-medium uppercase text-zinc-500">
+                    Caption Pos
+                  </p>
+                  <div className="flex gap-1.5">
+                    {positionOpts.map((o) => (
+                      <button
+                        key={o.value}
+                        type="button"
+                        onClick={() => updateStyle("position", o.value)}
+                        className={`h-7 min-w-12 rounded-md border px-3 text-[11px] font-medium transition ${
+                          styleParams.position === o.value
+                            ? "border-cyan-400/60 bg-cyan-400/15 text-cyan-400"
+                            : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:border-zinc-700"
+                        }`}
+                      >
+                        {o.icon}{" "}
+                        {o.value === "center"
+                          ? "Mid"
+                          : o.value === "top"
+                            ? "Top"
+                            : "Bot"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Hook Position */}
+                <div>
+                  <p className="mb-1.5 text-[11px] font-medium uppercase text-zinc-500">
+                    Hook Pos
+                  </p>
+                  <div className="flex gap-1.5">
+                    {positionOpts.map((o) => (
+                      <button
+                        key={`hook-${o.value}`}
+                        type="button"
+                        onClick={() => updateStyle("hookPosition", o.value)}
+                        className={`h-7 min-w-12 rounded-md border px-3 text-[11px] font-medium transition ${
+                          (styleParams.hookPosition || "top") === o.value
+                            ? "border-cyan-400/60 bg-cyan-400/15 text-cyan-400"
+                            : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:border-zinc-700"
+                        }`}
+                      >
+                        {o.icon}{" "}
+                        {o.value === "center"
+                          ? "Mid"
+                          : o.value === "top"
+                            ? "Top"
+                            : "Bot"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Caption Effect */}
+                <div>
+                  <p className="mb-1.5 text-[11px] font-medium uppercase text-zinc-500">
+                    Effect
+                  </p>
+                  <div className="flex gap-1.5">
+                    {effectOpts.map((o) => (
+                      <button
+                        key={o.value}
+                        type="button"
+                        onClick={() => setCaptionEffect(o.value)}
+                        className={`h-7 rounded-md border px-3 text-[11px] font-medium transition ${
+                          captionEffect === o.value
+                            ? "border-cyan-400/60 bg-cyan-400/15 text-cyan-400"
+                            : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:border-zinc-700"
+                        }`}
+                      >
+                        {o.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Music Toggle */}
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = !musicEnabled;
+                      setMusicEnabled(next);
+                      if (!next) {
+                        setSelectedMusicFile(null);
+                        setMusicVolume(20);
+                      }
+                    }}
+                    className={`flex h-8 w-full items-center gap-2 rounded-lg border px-3 text-[11px] font-medium transition ${
+                      musicEnabled
+                        ? "border-cyan-400/60 bg-cyan-400/15 text-cyan-400"
+                        : "border-zinc-800 bg-zinc-900 text-zinc-500 hover:border-zinc-700"
+                    }`}
+                  >
+                    <Music className="size-3.5" />
+                    Music
+                    <span className="ml-auto text-[10px] text-zinc-500">
+                      {musicEnabled ? "ON" : "OFF"}
+                    </span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Selected track indicator */}
+            {musicEnabled && selectedMusicFile ? (
+              <div className="flex items-center gap-2 rounded-lg border border-cyan-400/20 bg-cyan-400/5 px-3 py-2">
+                <Music className="size-3.5 text-cyan-400" />
+                <span className="min-w-0 flex-1 truncate text-xs text-cyan-400">
+                  {selectedMusicFile.replace(/\.[^.]+$/, "")}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedMusicFile(null)}
+                  className="shrink-0 text-zinc-500 transition hover:text-red-400"
+                >
+                  ✕
+                </button>
+              </div>
+            ) : null}
+
+            {/* Music Picker — expanded when enabled */}
+            {musicEnabled ? (
+              <motion.div
+                initial={{ opacity: 0, height: 0 }}
+                animate={{ opacity: 1, height: "auto" }}
+                exit={{ opacity: 0, height: 0 }}
+              >
+                <MusicPicker
+                  selectedFilename={selectedMusicFile}
+                  volume={musicVolume}
+                  onSelect={setSelectedMusicFile}
+                  onVolumeChange={setMusicVolume}
+                />
+              </motion.div>
+            ) : null}
+
+            {/* Error */}
+            {error ? (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className="rounded-lg border border-red-500/20 bg-red-500/5 px-4 py-3 text-xs text-red-300"
+              >
+                {error}
+              </motion.div>
+            ) : null}
+
+            {/* Generate Final Clip */}
+            <button
+              type="button"
+              disabled={isRendering}
+              onClick={() => void generateFinalClip()}
+              className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-cyan-400 text-sm font-semibold text-black transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500"
+            >
+              {isRendering ? (
+                <>
+                  <Loader2 className="size-4 animate-spin" />
+                  {renderStep || "Rendering..."}
+                </>
+              ) : (
+                <>
+                  <Play className="size-4" />
+                  Generate Final Clip
+                </>
+              )}
+            </button>
+
           </motion.div>
         </div>
-
-        {/* 7. Style Controls */}
-        <motion.div
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
-          className="mt-8 rounded-xl border border-zinc-800 bg-zinc-950 p-5"
-        >
-          <p className="mb-4 text-xs font-medium uppercase tracking-widest text-zinc-500">
-            Caption Style
-          </p>
-
-          <div className="space-y-4">
-            {/* Color Row */}
-            <div>
-              <p className="mb-2 text-[11px] font-medium text-zinc-500">
-                Color
-              </p>
-              <div className="flex gap-2">
-                {fontColorOptions.map((opt) => (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    onClick={() => updateStyle("fontColor", opt.value)}
-                    className={`flex items-center gap-2 rounded-lg border px-4 py-2 text-xs font-medium transition ${
-                      styleParams.fontColor === opt.value
-                        ? "border-cyan-400/50 bg-cyan-400/10 text-cyan-400"
-                        : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:border-zinc-700"
-                    }`}
-                  >
-                    <span
-                      className="inline-block size-2.5 rounded-full"
-                      style={{ backgroundColor: opt.dot }}
-                    />
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Size Row */}
-            <div>
-              <p className="mb-2 text-[11px] font-medium text-zinc-500">
-                Size
-              </p>
-              <div className="flex gap-2">
-                {fontSizeOptions.map((opt) => (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    onClick={() => updateStyle("fontSize", opt.value)}
-                    className={`rounded-lg border px-4 py-2 text-xs font-medium transition ${
-                      styleParams.fontSize === opt.value
-                        ? "border-cyan-400/50 bg-cyan-400/10 text-cyan-400"
-                        : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:border-zinc-700"
-                    }`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Background Row */}
-            <div>
-              <p className="mb-2 text-[11px] font-medium text-zinc-500">
-                Background
-              </p>
-              <div className="flex gap-2">
-                {backgroundOptions.map((opt) => (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    onClick={() => updateStyle("background", opt.value)}
-                    className={`rounded-lg border px-4 py-2 text-xs font-medium transition ${
-                      styleParams.background === opt.value
-                        ? "border-cyan-400/50 bg-cyan-400/10 text-cyan-400"
-                        : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:border-zinc-700"
-                    }`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Position Row */}
-            <div>
-              <p className="mb-2 text-[11px] font-medium text-zinc-500">
-                Position
-              </p>
-              <div className="flex gap-2">
-                {positionOptions.map((opt) => (
-                  <button
-                    key={opt.value}
-                    type="button"
-                    onClick={() => updateStyle("position", opt.value)}
-                    className={`rounded-lg border px-4 py-2 text-xs font-medium transition ${
-                      styleParams.position === opt.value
-                        ? "border-cyan-400/50 bg-cyan-400/10 text-cyan-400"
-                        : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:border-zinc-700"
-                    }`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Hook Position Row */}
-            <div>
-              <p className="mb-2 text-[11px] font-medium text-zinc-500">
-                Posisi Hook
-              </p>
-              <div className="flex gap-2">
-                {positionOptions.map((opt) => (
-                  <button
-                    key={`hook-${opt.value}`}
-                    type="button"
-                    onClick={() => updateStyle("hookPosition", opt.value)}
-                    className={`rounded-lg border px-4 py-2 text-xs font-medium transition ${
-                      (styleParams.hookPosition || "top") === opt.value
-                        ? "border-cyan-400/50 bg-cyan-400/10 text-cyan-400"
-                        : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:border-zinc-700"
-                    }`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        </motion.div>
-
-        {/* Music Picker */}
-        <motion.div
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.22 }}
-          className="mt-8"
-        >
-          <MusicPicker
-            selectedFilename={selectedMusicFile}
-            volume={musicVolume}
-            onSelect={setSelectedMusicFile}
-            onVolumeChange={setMusicVolume}
-          />
-        </motion.div>
-
-        {/* Error */}
-        {error ? (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="mt-6 rounded-xl border border-red-500/20 bg-red-500/5 px-5 py-4 text-sm text-red-300"
-          >
-            {error}
-          </motion.div>
-        ) : null}
-
-        {/* 8. Generate Final Clip — BOTTOM */}
-        <motion.div
-          initial={{ opacity: 0, y: 16 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.25 }}
-          className="mt-8"
-        >
-          <button
-            type="button"
-            disabled={isRendering}
-            onClick={() => void generateFinalClip()}
-            className="flex h-14 w-full items-center justify-center gap-3 rounded-xl bg-cyan-400 text-lg font-semibold text-black transition hover:bg-cyan-300 disabled:cursor-not-allowed disabled:bg-zinc-800 disabled:text-zinc-500"
-          >
-            {isRendering ? (
-              <>
-                <Loader2 className="size-5 animate-spin" />
-                {renderStep || "Rendering..."}
-              </>
-            ) : (
-              <>
-                <Play className="size-5" />
-                Generate Final Clip
-              </>
-            )}
-          </button>
-        </motion.div>
-
-        {/* Download */}
-        {videoUrl && !isRendering ? (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            className="mt-4 flex justify-center"
-          >
-            <a
-              href={videoUrl}
-              download
-              className="inline-flex items-center gap-2 rounded-lg bg-cyan-400 px-6 py-3 text-sm font-medium text-black transition hover:bg-cyan-300"
-            >
-              <Download className="size-4" />
-              Download Clip
-            </a>
-          </motion.div>
-        ) : null}
       </div>
     </section>
   );

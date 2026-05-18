@@ -26,11 +26,13 @@ export default function RootLayout({
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`${geistSans.variable} ${geistMono.variable} h-full bg-[#0a0a0a] antialiased`}
     >
       <body className="min-h-full bg-[#0a0a0a] text-zinc-100">
         <Sidebar />
-        <main className="ml-[60px]">{children}</main>
+        <main className="ml-[60px] flex flex-col items-center">
+          {children}
+        </main>
       </body>
     </html>
   );

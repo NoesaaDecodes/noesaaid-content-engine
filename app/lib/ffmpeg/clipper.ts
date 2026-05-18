@@ -18,6 +18,8 @@ import type { ClipCandidate } from "@/app/lib/clips";
 
 const fps = 30;
 
+export type CaptionEffect = "fade" | "pop" | "slide-up" | "karaoke";
+
 type ClipRenderInput = {
   sourcePath: string;
   candidate: ClipCandidate;
@@ -31,6 +33,7 @@ type ClipRenderInput = {
   staticCaption?: string;
   musicPath?: string;
   musicVolume?: number;
+  captionEffect?: CaptionEffect;
 };
 
 export async function renderClip({
@@ -46,6 +49,7 @@ export async function renderClip({
   staticCaption,
   musicPath,
   musicVolume,
+  captionEffect,
 }: ClipRenderInput) {
   await ensureRenderDirectories();
 
@@ -81,6 +85,7 @@ export async function renderClip({
     staticCaption,
     musicPath,
     musicVolume,
+    captionEffect,
   });
 
   return {
@@ -149,6 +154,7 @@ async function runClipRender({
   staticCaption,
   musicPath,
   musicVolume,
+  captionEffect,
 }: {
   sourcePath: string;
   outputPath: string;
@@ -165,6 +171,7 @@ async function runClipRender({
   staticCaption?: string;
   musicPath?: string;
   musicVolume?: number;
+  captionEffect?: CaptionEffect;
 }) {
   const quality = qualityOptions[settings.quality];
   const { w, h } = dims;
@@ -181,6 +188,7 @@ async function runClipRender({
   const captionSize = Math.max(40, Math.min(64, Math.round(h * 0.036)));
 
   const useStatic = !!(staticHook || staticCaption);
+  const effect = captionEffect || "fade";
   const { filters: textFilters, lastLabel } = useStatic
     ? buildStaticCaptionFilters(
         staticHook || "",
@@ -188,7 +196,8 @@ async function runClipRender({
         duration,
         fontFile,
         captionSize,
-        captionStyleParams
+        captionStyleParams,
+        effect
       )
     : buildWordCaptionFilters(
         words || [],
@@ -197,7 +206,8 @@ async function runClipRender({
         fontFile,
         captionSize,
         captionStyle,
-        captionStyleParams
+        captionStyleParams,
+        effect
       );
 
   const vol = clampNumber(musicVolume ?? 30, 0, 100) / 100;
@@ -287,6 +297,39 @@ type PhraseGroup = {
   end: number;
 };
 
+function buildAlphaExpr(
+  effect: CaptionEffect,
+  s: number,
+  e: number
+): string {
+  const ss = s.toFixed(3);
+  const ee = e.toFixed(3);
+  const fadeEnd = (e - 0.08).toFixed(3);
+
+  switch (effect) {
+    case "pop":
+      return `'if(lt(t-${ss}\\,0.05)\\,(t-${ss})/0.05\\,1)'`;
+    case "karaoke":
+      return `'if(lt(t-${ss}\\,0.05)\\,(t-${ss})/0.05\\,1)'`;
+    case "slide-up":
+      return `'if(lt(t-${ss}\\,0.12)\\,(t-${ss})/0.12\\,if(gt(t\\,${fadeEnd})\\,(${ee}-t)/0.08\\,1))'`;
+    case "fade":
+    default:
+      return `'if(lt(t-${ss}\\,0.12)\\,(t-${ss})/0.12\\,if(gt(t\\,${fadeEnd})\\,(${ee}-t)/0.08\\,1))'`;
+  }
+}
+
+function buildYExpr(
+  effect: CaptionEffect,
+  baseY: string,
+  s: number
+): string {
+  if (effect !== "slide-up") return baseY;
+  const ss = s.toFixed(3);
+  const rise = "min(1\\,10*(t-".concat(ss, "))");
+  return `'${baseY}+40*(1-${rise})'`;
+}
+
 function buildWordCaptionFilters(
   words: Array<{ word: string; start: number; end: number }>,
   clipStart: number,
@@ -294,7 +337,8 @@ function buildWordCaptionFilters(
   fontFile: string,
   captionSize: number,
   styleId?: CaptionStyleId,
-  params?: CaptionStyleParams
+  params?: CaptionStyleParams,
+  effect: CaptionEffect = "fade"
 ): { filters: string[]; lastLabel: string } {
   if (!words.length) return { filters: [], lastLabel: "vready" };
 
@@ -376,8 +420,15 @@ function buildWordCaptionFilters(
           : "";
     }
 
+    const wordEnd =
+      effect === "karaoke" ? Math.min(clipDuration, p.end + 0.05) : p.end;
+    const s = p.start.toFixed(3);
+    const e = wordEnd.toFixed(3);
+    const alphaExpr = buildAlphaExpr(effect, p.start, wordEnd);
+    const yExpr = buildYExpr(effect, yPos, p.start);
+
     filters.push(
-      `[${prevLabel}]drawtext=${fontFile}text='${escaped}':fontsize=${fontSize}:fontcolor=${fontColor}${shadow}${border}:x='max(80,(w-text_w)/2)':y=${yPos}:enable='between(t,${p.start.toFixed(3)},${p.end.toFixed(3)})'[${nextLabel}]`
+      `[${prevLabel}]drawtext=${fontFile}text='${escaped}':fontsize=${fontSize}:fontcolor=${fontColor}:alpha=${alphaExpr}${shadow}${border}:x='max(80,(w-text_w)/2)':y=${yExpr}:enable='between(t,${s},${e})'[${nextLabel}]`
     );
     prevLabel = nextLabel;
   }
@@ -421,7 +472,8 @@ function buildStaticCaptionFilters(
   clipDuration: number,
   fontFile: string,
   captionSize: number,
-  params?: CaptionStyleParams
+  params?: CaptionStyleParams,
+  effect: CaptionEffect = "fade"
 ): { filters: string[]; lastLabel: string } {
   const granular = params || defaultCaptionStyleParams;
   const fontSize = captionFontSizes[granular.fontSize] || captionSize;
@@ -447,9 +499,14 @@ function buildStaticCaptionFilters(
   if (hasHook) {
     const escaped = escapeDrawtextText(stripEmoji(hook));
     const hookEnd = Math.min(3, clipDuration);
+    const hookFontSize = Math.round(fontSize * 1.15);
     const label = "vhook";
+    const hEnd = hookEnd.toFixed(3);
+    const alphaExpr = buildAlphaExpr(effect, 0, hookEnd);
+    const hookYExpr = buildYExpr(effect, hookY, 0);
+
     filters.push(
-      `[${prevLabel}]drawtext=${fontFile}text='${escaped}':fontsize=${Math.round(fontSize * 1.15)}:fontcolor=${fontColor}${shadow}${border}:x='max(60,(w-text_w)/2)':y=${hookY}:enable='between(t,0,${hookEnd.toFixed(3)})'[${label}]`
+      `[${prevLabel}]drawtext=${fontFile}text='${escaped}':fontsize=${hookFontSize}:fontcolor=${fontColor}:alpha=${alphaExpr}${shadow}${border}:x='max(60,(w-text_w)/2)':y=${hookYExpr}:enable='between(t,0,${hEnd})'[${label}]`
     );
     prevLabel = label;
   }
@@ -471,8 +528,10 @@ function buildStaticCaptionFilters(
           ? clipDuration
           : Math.min(captionStart + (i + 1) * timePerLine, clipDuration);
         const label = `vcaption${i}`;
+        const alphaExpr = buildAlphaExpr(effect, lineStart, lineEnd);
+        const yExpr = buildYExpr(effect, captionY, lineStart);
         filters.push(
-          `[${prevLabel}]drawtext=${fontFile}text='${escaped}':fontsize=${fontSize}:fontcolor=${fontColor}${shadow}${border}:x='max(60,(w-text_w)/2)':y=${captionY}:enable='between(t,${lineStart.toFixed(3)},${lineEnd.toFixed(3)})'[${label}]`
+          `[${prevLabel}]drawtext=${fontFile}text='${escaped}':fontsize=${fontSize}:fontcolor=${fontColor}:alpha=${alphaExpr}${shadow}${border}:x='max(60,(w-text_w)/2)':y=${yExpr}:enable='between(t,${lineStart.toFixed(3)},${lineEnd.toFixed(3)})'[${label}]`
         );
         prevLabel = label;
       }

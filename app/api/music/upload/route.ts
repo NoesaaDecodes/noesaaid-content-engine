@@ -5,6 +5,7 @@ import { NextResponse } from "next/server";
 import { ensureRenderDirectories, musicDir } from "@/app/lib/ffmpeg/assets";
 import {
   addTrackToCatalog,
+  getCatalog,
   isSafeMusicFilename,
   type MusicTrack,
 } from "@/app/lib/music/music-engine";
@@ -99,6 +100,13 @@ export async function POST(request: Request) {
   const buffer = Buffer.from(await file.arrayBuffer());
 
   await writeFile(outputPath, buffer);
+
+  const existingCatalog = await getCatalog();
+  const existingTrack = existingCatalog.find((t) => t.filename === filename);
+
+  if (existingTrack) {
+    return NextResponse.json({ success: true, track: existingTrack });
+  }
 
   const track: MusicTrack = {
     id: `user-${uid}`,

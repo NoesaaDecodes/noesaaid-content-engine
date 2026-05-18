@@ -49,7 +49,7 @@ const StudioRenderSchema = z.object({
   captionStyle: z.enum(captionStyleIds).default("classic"),
   captionStyleParams: z
     .object({
-      fontColor: z.enum(["#FFE600", "#FFFFFF", "#00FFFF"]),
+      fontColor: z.enum(["#FFE600", "#FFFFFF", "#00FFFF", "#FF8C00", "#FF69B4"]),
       fontSize: z.enum(["small", "medium", "large"]),
       background: z.enum(["dark", "light", "none"]),
       position: z.enum(["top", "center", "bottom"]),
@@ -62,6 +62,9 @@ const StudioRenderSchema = z.object({
   caption: z.string().max(500).optional(),
   musicPath: z.string().max(200).optional(),
   musicVolume: z.number().min(0).max(100).optional(),
+  captionEffect: z
+    .enum(["fade", "pop", "slide-up", "karaoke"])
+    .default("fade"),
 });
 
 export async function POST(request: Request) {
@@ -112,6 +115,7 @@ export async function POST(request: Request) {
       customHeight,
       hook,
       caption,
+      captionEffect,
     } = parsed.data;
 
     const duration = candidate.endTime - candidate.startTime;
@@ -152,6 +156,7 @@ export async function POST(request: Request) {
       staticCaption: caption ? stripEmoji(caption) : undefined,
       musicPath: resolvedMusic,
       musicVolume: parsed.data.musicVolume,
+      captionEffect,
     });
 
     return NextResponse.json({

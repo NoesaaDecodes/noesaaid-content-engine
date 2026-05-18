@@ -219,8 +219,8 @@ export default function MusicPicker({
                   </p>
                 </div>
                 {isSelected ? (
-                  <span className="shrink-0 text-[10px] font-medium text-cyan-400">
-                    Selected
+                  <span className="shrink-0 text-xs text-zinc-500 transition hover:text-red-400">
+                    ✕
                   </span>
                 ) : null}
               </button>

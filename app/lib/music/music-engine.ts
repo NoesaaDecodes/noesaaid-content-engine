@@ -20,8 +20,21 @@ export async function getCatalog(): Promise<MusicTrack[]> {
     const raw = await readFile(catalogPath, "utf-8");
     const tracks = JSON.parse(raw) as MusicTrack[];
 
+    // Deduplicate: keep first entry per filename
+    const seen = new Set<string>();
+    const unique = tracks.filter((t) => {
+      if (seen.has(t.filename)) return false;
+      seen.add(t.filename);
+      return true;
+    });
+
+    // Write back deduplicated catalog if duplicates were found
+    if (unique.length !== tracks.length) {
+      await writeFile(catalogPath, JSON.stringify(unique, null, 2), "utf-8");
+    }
+
     return Promise.all(
-      tracks.map(async (track) => ({
+      unique.map(async (track) => ({
         ...track,
         downloaded: await isDownloaded(track.filename),
       }))

@@ -9,7 +9,7 @@ export default function Home() {
 
   if (mode === "script") {
     return (
-      <main className="min-h-screen bg-[#0a0a0a]">
+      <main className="flex min-h-screen items-start justify-center bg-[#0a0a0a]">
         <ScriptStudio onBack={() => setMode("clips")} />
       </main>
     );
