@@ -99,6 +99,8 @@ const effectOpts = [
   { value: "pop" as const, label: "Pop" },
   { value: "slide-up" as const, label: "Slide↑" },
   { value: "karaoke" as const, label: "Karaoke" },
+  { value: "bounce" as const, label: "Bounce" },
+  { value: "punch" as const, label: "Punch" },
 ];
 
 export default function StudioClient() {
@@ -123,7 +125,7 @@ export default function StudioClient() {
   const [musicVolume, setMusicVolume] = useState(30);
   const [musicEnabled, setMusicEnabled] = useState(false);
   const [captionEffect, setCaptionEffect] = useState<
-    "fade" | "pop" | "slide-up" | "karaoke"
+    "fade" | "pop" | "slide-up" | "karaoke" | "bounce" | "punch"
   >("fade");
 
   const hookRef = useRef<HTMLInputElement>(null);

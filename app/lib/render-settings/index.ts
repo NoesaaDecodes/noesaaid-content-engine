@@ -118,7 +118,7 @@ export const qualityOptions: Record<
   { crf: string; preset: string; audioBitrate: string }
 > = {
   draft: { crf: "28", preset: "ultrafast", audioBitrate: "96k" },
-  standard: { crf: "23", preset: "veryfast", audioBitrate: "128k" },
+  standard: { crf: "23", preset: "superfast", audioBitrate: "128k" },
   high: { crf: "19", preset: "medium", audioBitrate: "160k" },
 };
 

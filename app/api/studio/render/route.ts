@@ -63,7 +63,7 @@ const StudioRenderSchema = z.object({
   musicPath: z.string().max(200).optional(),
   musicVolume: z.number().min(0).max(100).optional(),
   captionEffect: z
-    .enum(["fade", "pop", "slide-up", "karaoke"])
+    .enum(["fade", "pop", "slide-up", "karaoke", "bounce", "punch"])
     .default("fade"),
 });
 

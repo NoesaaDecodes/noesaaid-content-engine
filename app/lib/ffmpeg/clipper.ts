@@ -18,7 +18,7 @@ import type { ClipCandidate } from "@/app/lib/clips";
 
 const fps = 30;
 
-export type CaptionEffect = "fade" | "pop" | "slide-up" | "karaoke";
+export type CaptionEffect = "fade" | "pop" | "slide-up" | "karaoke" | "bounce" | "punch";
 
 type ClipRenderInput = {
   sourcePath: string;
@@ -69,6 +69,7 @@ export async function renderClip({
   const isVerticalSource = sourceDims.h > sourceDims.w;
   const hasAudio = await probeHasAudio(sourcePath);
 
+  const t0 = Date.now();
   await runClipRender({
     sourcePath,
     outputPath,
@@ -87,6 +88,8 @@ export async function renderClip({
     musicVolume,
     captionEffect,
   });
+
+  console.log("[RENDER TIME]", Date.now() - t0, "ms");
 
   return {
     filename,
@@ -174,11 +177,13 @@ async function runClipRender({
   captionEffect?: CaptionEffect;
 }) {
   const quality = qualityOptions[settings.quality];
-  const { w, h } = dims;
+  const isDraft = settings.quality === "draft";
+  const w = isDraft ? Math.min(dims.w, 720) : dims.w;
+  const h = isDraft ? Math.min(dims.h, 1280) : dims.h;
 
   const scalePad = `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps=${fps}`;
 
-  const applyZoompan = isVerticalSource && duration <= 60;
+  const applyZoompan = !isDraft && isVerticalSource && duration <= 10;
   const baseVideo = applyZoompan
     ? `[0:v]${scalePad},zoompan=z='min(zoom+0.0008,1.08)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${w}x${h}:fps=${fps},crop=iw:ih:0:0,format=yuv420p[vbase]`
     : `[0:v]${scalePad},format=yuv420p[vbase]`;
@@ -226,15 +231,21 @@ async function runClipRender({
     );
   }
 
+  const gradientFilters = isDraft
+    ? [`[vbase]format=yuv420p[vready]`]
+    : [
+        `[vbase]drawbox=x=0:y=ih*0.45:w=iw:h=ih*0.08:color=black@0.03:t=fill[vg1]`,
+        `[vg1]drawbox=x=0:y=ih*0.53:w=iw:h=ih*0.08:color=black@0.06:t=fill[vg2]`,
+        `[vg2]drawbox=x=0:y=ih*0.61:w=iw:h=ih*0.08:color=black@0.10:t=fill[vg3]`,
+        `[vg3]drawbox=x=0:y=ih*0.69:w=iw:h=ih*0.08:color=black@0.15:t=fill[vg4]`,
+        `[vg4]drawbox=x=0:y=ih*0.77:w=iw:h=ih*0.08:color=black@0.22:t=fill[vg5]`,
+        `[vg5]drawbox=x=0:y=ih*0.85:w=iw:h=ih*0.15:color=black@0.30:t=fill[vgrad]`,
+        `[vgrad]format=yuv420p[vready]`,
+      ];
+
   const filters = [
     baseVideo,
-    `[vbase]drawbox=x=0:y=ih*0.45:w=iw:h=ih*0.08:color=black@0.03:t=fill[vg1]`,
-    `[vg1]drawbox=x=0:y=ih*0.53:w=iw:h=ih*0.08:color=black@0.06:t=fill[vg2]`,
-    `[vg2]drawbox=x=0:y=ih*0.61:w=iw:h=ih*0.08:color=black@0.10:t=fill[vg3]`,
-    `[vg3]drawbox=x=0:y=ih*0.69:w=iw:h=ih*0.08:color=black@0.15:t=fill[vg4]`,
-    `[vg4]drawbox=x=0:y=ih*0.77:w=iw:h=ih*0.08:color=black@0.22:t=fill[vg5]`,
-    `[vg5]drawbox=x=0:y=ih*0.85:w=iw:h=ih*0.15:color=black@0.30:t=fill[vgrad]`,
-    `[vgrad]format=yuv420p[vready]`,
+    ...gradientFilters,
     ...textFilters.map((f, i) => {
       if (i === 0) {
         return f.replace(`[vbase]`, `[vready]`);
@@ -311,6 +322,10 @@ function buildAlphaExpr(
       return `'if(lt(t-${ss}\\,0.05)\\,(t-${ss})/0.05\\,1)'`;
     case "karaoke":
       return `'if(lt(t-${ss}\\,0.05)\\,(t-${ss})/0.05\\,1)'`;
+    case "bounce":
+      return `'if(lt(t-${ss}\\,0.10)\\,(t-${ss})/0.10\\,1)'`;
+    case "punch":
+      return `'if(lt(t-${ss}\\,0.06)\\,(t-${ss})/0.06\\,1)'`;
     case "slide-up":
       return `'if(lt(t-${ss}\\,0.12)\\,(t-${ss})/0.12\\,if(gt(t\\,${fadeEnd})\\,(${ee}-t)/0.08\\,1))'`;
     case "fade":
@@ -324,10 +339,27 @@ function buildYExpr(
   baseY: string,
   s: number
 ): string {
-  if (effect !== "slide-up") return baseY;
+  if (effect === "slide-up") {
+    const ss = s.toFixed(3);
+    const rise = "min(1\\,10*(t-".concat(ss, "))");
+    return `'${baseY}+40*(1-${rise})'`;
+  }
+  if (effect === "bounce") {
+    const ss = s.toFixed(3);
+    return `'${baseY}+abs(sin((t-${ss})*12))*8'`;
+  }
+  return baseY;
+}
+
+function buildFontsizeExpr(
+  effect: CaptionEffect,
+  baseSize: number,
+  s: number
+): string {
+  if (effect !== "punch") return baseSize.toString();
   const ss = s.toFixed(3);
-  const rise = "min(1\\,10*(t-".concat(ss, "))");
-  return `'${baseY}+40*(1-${rise})'`;
+  const peak = Math.round(baseSize * 1.4);
+  return `'if(lt(t-${ss}\\,0.08)\\,${peak}-${baseSize}*0.4*((t-${ss})/0.08)\\,${baseSize})'`;
 }
 
 function buildWordCaptionFilters(
@@ -426,9 +458,10 @@ function buildWordCaptionFilters(
     const e = wordEnd.toFixed(3);
     const alphaExpr = buildAlphaExpr(effect, p.start, wordEnd);
     const yExpr = buildYExpr(effect, yPos, p.start);
+    const fontsizeExpr = buildFontsizeExpr(effect, fontSize, p.start);
 
     filters.push(
-      `[${prevLabel}]drawtext=${fontFile}text='${escaped}':fontsize=${fontSize}:fontcolor=${fontColor}:alpha=${alphaExpr}${shadow}${border}:x='max(80,(w-text_w)/2)':y=${yExpr}:enable='between(t,${s},${e})'[${nextLabel}]`
+      `[${prevLabel}]drawtext=${fontFile}text='${escaped}':fontsize=${fontsizeExpr}:fontcolor=${fontColor}:alpha=${alphaExpr}${shadow}${border}:x='max(80,(w-text_w)/2)':y=${yExpr}:enable='between(t,${s},${e})'[${nextLabel}]`
     );
     prevLabel = nextLabel;
   }
@@ -504,9 +537,10 @@ function buildStaticCaptionFilters(
     const hEnd = hookEnd.toFixed(3);
     const alphaExpr = buildAlphaExpr(effect, 0, hookEnd);
     const hookYExpr = buildYExpr(effect, hookY, 0);
+    const hookFontsizeExpr = buildFontsizeExpr(effect, hookFontSize, 0);
 
     filters.push(
-      `[${prevLabel}]drawtext=${fontFile}text='${escaped}':fontsize=${hookFontSize}:fontcolor=${fontColor}:alpha=${alphaExpr}${shadow}${border}:x='max(60,(w-text_w)/2)':y=${hookYExpr}:enable='between(t,0,${hEnd})'[${label}]`
+      `[${prevLabel}]drawtext=${fontFile}text='${escaped}':fontsize=${hookFontsizeExpr}:fontcolor=${fontColor}:alpha=${alphaExpr}${shadow}${border}:x='max(60,(w-text_w)/2)':y=${hookYExpr}:enable='between(t,0,${hEnd})'[${label}]`
     );
     prevLabel = label;
   }
@@ -530,8 +564,9 @@ function buildStaticCaptionFilters(
         const label = `vcaption${i}`;
         const alphaExpr = buildAlphaExpr(effect, lineStart, lineEnd);
         const yExpr = buildYExpr(effect, captionY, lineStart);
+        const fontsizeExpr = buildFontsizeExpr(effect, fontSize, lineStart);
         filters.push(
-          `[${prevLabel}]drawtext=${fontFile}text='${escaped}':fontsize=${fontSize}:fontcolor=${fontColor}:alpha=${alphaExpr}${shadow}${border}:x='max(60,(w-text_w)/2)':y=${yExpr}:enable='between(t,${lineStart.toFixed(3)},${lineEnd.toFixed(3)})'[${label}]`
+          `[${prevLabel}]drawtext=${fontFile}text='${escaped}':fontsize=${fontsizeExpr}:fontcolor=${fontColor}:alpha=${alphaExpr}${shadow}${border}:x='max(60,(w-text_w)/2)':y=${yExpr}:enable='between(t,${lineStart.toFixed(3)},${lineEnd.toFixed(3)})'[${label}]`
         );
         prevLabel = label;
       }
