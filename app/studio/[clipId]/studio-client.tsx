@@ -147,7 +147,11 @@ export default function StudioClient() {
     }
   }, []);
 
-  function insertAtCursor(
+  function containsEmoji(text: string): boolean {
+  return /[\u{1F000}-\u{1FFFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/u.test(text);
+}
+
+function insertAtCursor(
     ref: React.RefObject<HTMLInputElement | HTMLTextAreaElement | null>,
     value: string,
     setter: (v: string) => void,
@@ -497,6 +501,11 @@ export default function StudioClient() {
                   insertAtCursor(hookRef, char, setHook, hook)
                 }
               />
+              {containsEmoji(hook) ? (
+                <p className="mt-1 text-[10px] text-amber-400/80">
+                  Emoji akan dihapus dari video, tetap ada di caption untuk posting
+                </p>
+              ) : null}
             </div>
 
             {/* Caption */}
@@ -518,6 +527,11 @@ export default function StudioClient() {
                   insertAtCursor(captionRef, char, setCaption, caption)
                 }
               />
+              {containsEmoji(caption) ? (
+                <p className="mt-1 text-[10px] text-amber-400/80">
+                  Emoji akan dihapus dari video, tetap ada di caption untuk posting
+                </p>
+              ) : null}
             </div>
 
             {/* Hashtags */}

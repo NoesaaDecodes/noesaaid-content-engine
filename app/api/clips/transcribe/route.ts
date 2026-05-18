@@ -57,7 +57,7 @@ export async function POST(request: Request) {
     }
 
     const { stdout, stderr } = await execFileAsync("python", args, {
-      timeout: 120_000,
+      timeout: 300_000,
       maxBuffer: 10 * 1024 * 1024,
     });
 

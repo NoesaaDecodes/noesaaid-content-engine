@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Loader2, Music, Upload, Volume2, VolumeX } from "lucide-react";
+import { Loader2, Music, Trash2, Upload, Volume2, VolumeX } from "lucide-react";
 
 type MusicTrack = {
   id: string;
@@ -108,6 +108,26 @@ export default function MusicPicker({
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (file) void uploadFile(file);
+  }
+
+  async function deleteTrack(track: MusicTrack) {
+    console.log("[DELETE UI]", track.id, track.filename);
+    try {
+      const res = await fetch("/api/music/" + encodeURIComponent(track.id), {
+        method: "DELETE",
+      });
+      const data = (await res.json()) as { success: boolean; error?: string };
+      console.log("[DELETE UI] response:", data);
+      if (!res.ok || !data.success) {
+        throw new Error(data.error || "Delete failed");
+      }
+      setTracks((prev) => prev.filter((t) => t.id !== track.id));
+      if (selectedFilename === track.filename) {
+        onSelect(null);
+      }
+    } catch (err) {
+      console.error("[DELETE UI] error:", err);
+    }
   }
 
   const filtered =
@@ -218,8 +238,20 @@ export default function MusicPicker({
                     {!track.downloaded ? " (not downloaded)" : ""}
                   </p>
                 </div>
-                {isSelected ? (
-                  <span className="shrink-0 text-xs text-zinc-500 transition hover:text-red-400">
+                {track.source === "user" ? (
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      void deleteTrack(track);
+                    }}
+                    className="shrink-0 rounded p-1 text-zinc-600 transition hover:bg-red-500/10 hover:text-red-400"
+                    title="Delete track"
+                  >
+                    <Trash2 className="size-3.5" />
+                  </button>
+                ) : isSelected ? (
+                  <span className="shrink-0 text-xs text-zinc-500">
                     ✕
                   </span>
                 ) : null}

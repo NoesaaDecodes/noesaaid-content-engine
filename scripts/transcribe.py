@@ -55,7 +55,7 @@ def detect_language(audio_path: str, model_size: str) -> str:
     return info.language
 
 
-def transcribe(audio_path: str, model_size: str = "small", language: str | None = None) -> dict:
+def transcribe(audio_path: str, model_size: str = "base", language: str | None = None) -> dict:
     """Run faster-whisper transcription and return structured output."""
     from faster_whisper import WhisperModel
 
@@ -123,7 +123,7 @@ def transcribe(audio_path: str, model_size: str = "small", language: str | None 
 def main():
     parser = argparse.ArgumentParser(description="Transcribe video with faster-whisper")
     parser.add_argument("video_path", help="Path to video file")
-    parser.add_argument("--model", default="small", help="Whisper model size (tiny/base/small/medium/large)")
+    parser.add_argument("--model", default="base", help="Whisper model size (tiny/base/small/medium/large)")
     parser.add_argument("--language", default=None, help="Language code (e.g., 'id', 'en')")
     args = parser.parse_args()
 

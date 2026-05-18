@@ -10,7 +10,9 @@ export async function DELETE(
   _request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = await params;
+  const rawId = (await params).id;
+  const id = decodeURIComponent(rawId);
+  console.log("[DELETE] raw:", rawId, "decoded:", id);
 
   if (!id || id.length > 120) {
     return NextResponse.json(
@@ -20,10 +22,11 @@ export async function DELETE(
   }
 
   const removed = await removeTrackFromCatalog(id);
+  console.log("[DELETE] removeTrackFromCatalog result:", removed ? { id: removed.id, filename: removed.filename, source: removed.source } : null);
 
   if (!removed) {
     return NextResponse.json(
-      { success: false, error: "Track not found." },
+      { success: false, error: "Track not found.", detail: `No track matching id: ${id}` },
       { status: 404 }
     );
   }
