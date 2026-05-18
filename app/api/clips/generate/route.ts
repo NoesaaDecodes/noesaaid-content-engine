@@ -36,6 +36,7 @@ type GeneratedClip = {
   filename: string | null;
   downloadUrl: string | null;
   previewUrl: string | null;
+  thumbnailUrl: string | null;
   score: number;
   hook: string;
   title: string;
@@ -152,10 +153,27 @@ async function renderCandidate(
       words,
     });
 
+    const thumbPath = output.outputPath.replace(".mp4", "-thumb.jpg");
+    const thumbnailUrl = output.downloadUrl.replace(".mp4", "-thumb.jpg");
+
+    try {
+      await execFileAsync("ffmpeg", [
+        "-y",
+        "-ss", "1",
+        "-i", output.outputPath,
+        "-frames:v", "1",
+        "-update", "1",
+        thumbPath,
+      ], { timeout: 15_000 });
+    } catch (thumbErr) {
+      console.error("Thumbnail extraction failed:", thumbErr);
+    }
+
     return {
       filename: output.filename,
       downloadUrl: output.downloadUrl,
       previewUrl: output.downloadUrl,
+      thumbnailUrl,
       score: candidate.score,
       hook: candidate.suggestedHook,
       title: candidate.title,
@@ -170,6 +188,7 @@ async function renderCandidate(
       filename: null,
       downloadUrl: null,
       previewUrl: null,
+      thumbnailUrl: null,
       score: candidate.score,
       hook: candidate.suggestedHook,
       title: candidate.title,

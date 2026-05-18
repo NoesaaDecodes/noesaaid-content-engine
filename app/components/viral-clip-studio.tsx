@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, DragEvent, useState } from "react";
+import { ChangeEvent, DragEvent, useEffect, useState } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -143,6 +143,7 @@ export function ViralClipStudio({
   const [isUploading, setIsUploading] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generateStep, setGenerateStep] = useState("");
+  const [elapsed, setElapsed] = useState(0);
   const [copiedClipKey, setCopiedClipKey] = useState("");
   const [expandedCaption, setExpandedCaption] = useState<number | null>(null);
   const [settings] = useState<AppSettings>(readSettings);
@@ -155,6 +156,12 @@ export function ViralClipStudio({
     uploadedVideos.find((v) => v.sourcePath === activeSourcePath) || null;
   const hasResults = clips.length > 0;
   const hasUploads = uploadedVideos.length > 0;
+
+  useEffect(() => {
+    if (!isGenerating) return;
+    const id = setInterval(() => setElapsed((s) => s + 1), 1000);
+    return () => clearInterval(id);
+  }, [isGenerating]);
 
   async function uploadFiles(files: FileList | File[]) {
     const selected = Array.from(files).slice(0, 5);
@@ -218,21 +225,18 @@ export function ViralClipStudio({
     if (!activeVideo) return;
 
     setIsGenerating(true);
-    setGenerateStep("Starting transcription...");
+    setGenerateStep("Mentranskrip audio...");
+    setElapsed(0);
     setError("");
     setClips([]);
 
     const stepTimer1 = window.setTimeout(
-      () => setGenerateStep("Analyzing source video"),
-      800
+      () => setGenerateStep("Menganalisis klip..."),
+      5000
     );
     const stepTimer2 = window.setTimeout(
-      () => setGenerateStep("Selecting viral moments"),
-      1600
-    );
-    const stepTimer3 = window.setTimeout(
-      () => setGenerateStep("Rendering clips"),
-      2400
+      () => setGenerateStep("Merender klip..."),
+      15000
     );
 
     try {
@@ -260,9 +264,8 @@ export function ViralClipStudio({
       }
 
       setClips(data.clips);
-      setGenerateStep("");
+      setGenerateStep("Selesai!");
 
-      // Save to history
       saveToHistory({
         sourcePath: activeVideo.sourcePath,
         sourceFilename: activeVideo.originalName,
@@ -274,7 +277,6 @@ export function ViralClipStudio({
     } finally {
       window.clearTimeout(stepTimer1);
       window.clearTimeout(stepTimer2);
-      window.clearTimeout(stepTimer3);
       setIsGenerating(false);
     }
   }
@@ -397,7 +399,7 @@ export function ViralClipStudio({
               </div>
               <p className="text-sm font-medium text-zinc-300">
                 {isUploading
-                  ? "Uploading..."
+                  ? "Mengunggah video..."
                   : "Drop videos here or browse"}
               </p>
               <p className="mt-1.5 text-xs text-zinc-600">
@@ -580,7 +582,7 @@ export function ViralClipStudio({
                   {isGenerating ? (
                     <>
                       <Loader2 className="size-5 animate-spin" />
-                      {generateStep || "Generating..."}
+                      {generateStep || "Generating..."} ({elapsed}s)
                     </>
                   ) : (
                     <>
@@ -599,13 +601,18 @@ export function ViralClipStudio({
           <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
-            className="mt-8 flex flex-col items-center gap-4 py-16"
+            className="mt-8 flex flex-col items-center gap-3 py-16"
           >
             <Loader2 className="size-8 animate-spin text-cyan-400" />
             <p className="text-lg font-medium text-zinc-300">
               {generateStep || "Processing..."}
             </p>
-            <p className="text-sm text-zinc-600">This may take a moment</p>
+            <p className="text-sm text-zinc-500">{elapsed}s elapsed</p>
+            {elapsed > 30 && generateStep === "Mentranskrip audio..." ? (
+              <p className="text-xs text-amber-400">
+                Transkripsi memakan waktu, harap tunggu...
+              </p>
+            ) : null}
           </motion.div>
         ) : null}
 
@@ -725,51 +732,56 @@ export function ViralClipStudio({
                     </div>
 
                     {/* Actions */}
-                    <div className="flex gap-2">
-                      {clip.downloadUrl ? (
-                        <a
-                          href={clip.downloadUrl}
-                          className="flex h-9 flex-1 items-center justify-center gap-2 rounded-lg bg-cyan-400 text-sm font-medium text-black transition hover:bg-cyan-300"
+                    <div className="space-y-2">
+                      <div className="flex gap-2">
+                        {clip.downloadUrl ? (
+                          <a
+                            href={clip.downloadUrl}
+                            className="flex h-9 flex-1 items-center justify-center gap-2 rounded-lg bg-cyan-400 text-sm font-medium text-black transition hover:bg-cyan-300"
+                          >
+                            <Download className="size-3.5" />
+                            Download
+                          </a>
+                        ) : null}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            sessionStorage.setItem(
+                              "studio-clip",
+                              JSON.stringify(clip)
+                            );
+                            sessionStorage.setItem(
+                              "studio-source",
+                              activeSourcePath
+                            );
+                            window.location.href = `/studio/${encodeURIComponent(clip.filename?.replace(".mp4", "") || "clip")}`;
+                          }}
+                          className="flex h-9 items-center justify-center gap-2 rounded-lg border border-cyan-400/30 bg-cyan-400/5 px-4 text-sm font-medium text-cyan-400 transition hover:bg-cyan-400/10"
                         >
-                          <Download className="size-3.5" />
-                          Download
-                        </a>
-                      ) : null}
+                          <Sparkles className="size-3.5" />
+                          Studio
+                        </button>
+                      </div>
                       <button
                         type="button"
                         onClick={() => void copyCaption(clip, index)}
-                        className="flex h-9 flex-1 items-center justify-center gap-2 rounded-lg border border-zinc-800 text-sm font-medium text-zinc-300 transition hover:border-zinc-600 hover:text-white"
+                        className={`flex h-9 w-full items-center justify-center gap-2 rounded-lg border text-sm font-medium transition ${
+                          copiedClipKey === `${clip.startTime}-${index}`
+                            ? "border-emerald-500/50 bg-emerald-500/10 text-emerald-400"
+                            : "border-cyan-400/30 bg-transparent text-cyan-400 hover:bg-cyan-400/10"
+                        }`}
                       >
-                        {copiedClipKey ===
-                        `${clip.startTime}-${index}` ? (
+                        {copiedClipKey === `${clip.startTime}-${index}` ? (
                           <>
-                            <Check className="size-3.5 text-cyan-400" />
-                            Copied
+                            <Check className="size-3.5" />
+                            ✓ Copied!
                           </>
                         ) : (
                           <>
                             <Clipboard className="size-3.5" />
-                            Copy Caption
+                            Copy Caption + Hashtags
                           </>
                         )}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          sessionStorage.setItem(
-                            "studio-clip",
-                            JSON.stringify(clip)
-                          );
-                          sessionStorage.setItem(
-                            "studio-source",
-                            activeSourcePath
-                          );
-                          window.location.href = `/studio/${encodeURIComponent(clip.filename?.replace(".mp4", "") || "clip")}`;
-                        }}
-                        className="flex h-9 items-center justify-center gap-2 rounded-lg border border-cyan-400/30 bg-cyan-400/5 px-4 text-sm font-medium text-cyan-400 transition hover:bg-cyan-400/10"
-                      >
-                        <Sparkles className="size-3.5" />
-                        Studio
                       </button>
                     </div>
 

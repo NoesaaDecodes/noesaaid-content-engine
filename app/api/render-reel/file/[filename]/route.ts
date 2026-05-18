@@ -11,7 +11,7 @@ export async function GET(
 ) {
   const { filename } = await params;
 
-  if (!/^ai-(?:reel|clip)-\d{8}T\d{6}Z-[a-f0-9]{8}\.mp4$/.test(filename)) {
+  if (!/^ai-(?:reel|clip)-\d{8}T\d{6}Z-[a-f0-9]{8}\.(?:mp4|jpg)$/.test(filename)) {
     return NextResponse.json({ error: "Invalid filename" }, { status: 400 });
   }
 
@@ -23,12 +23,15 @@ export async function GET(
     return NextResponse.json({ error: "Invalid path" }, { status: 400 });
   }
 
+  const isJpg = filename.endsWith(".jpg");
+  const contentType = isJpg ? "image/jpeg" : "video/mp4";
+
   try {
     const file = await readFile(resolved);
 
     return new Response(file, {
       headers: {
-        "Content-Type": "video/mp4",
+        "Content-Type": contentType,
         "Content-Disposition": `attachment; filename="${filename}"`,
         "Cache-Control": "no-store",
       },
