@@ -10,6 +10,7 @@ import {
   normalizeRenderSettings,
   type RenderSettings,
 } from "@/app/lib/render-settings";
+import { mimo } from "@/app/lib/mimo";
 
 const execFileAsync = promisify(execFile);
 
@@ -38,6 +39,7 @@ type GeneratedClip = {
   previewUrl: string | null;
   thumbnailUrl: string | null;
   score: number;
+  reason: string;
   hook: string;
   title: string;
   caption: string;
@@ -45,6 +47,7 @@ type GeneratedClip = {
   startTime: number;
   endTime: number;
   words?: Array<{ word: string; start: number; end: number }>;
+  aiScript?: { hook: string; caption: string; hashtags: string[] };
   error?: string;
 };
 
@@ -111,7 +114,9 @@ export async function POST(request: Request) {
             settings,
             input.data.customWidth,
             input.data.customHeight,
-            words
+            words,
+            input.data.platform,
+            input.data.language
           )
         )
       );
@@ -145,19 +150,24 @@ async function renderCandidate(
   resolvedPath: string,
   candidate: ClipCandidate,
   settings: RenderSettings,
-  customWidth?: number,
-  customHeight?: number,
-  words?: Array<{ word: string; start: number; end: number }>
+  customWidth: number | undefined,
+  customHeight: number | undefined,
+  words: Array<{ word: string; start: number; end: number }> | undefined,
+  platform: string,
+  language: string
 ): Promise<GeneratedClip> {
   try {
-    const output = await renderClip({
-      sourcePath: resolvedPath,
-      candidate,
-      settings,
-      customWidth,
-      customHeight,
-      words,
-    });
+    const [output, aiScript] = await Promise.all([
+      renderClip({
+        sourcePath: resolvedPath,
+        candidate,
+        settings,
+        customWidth,
+        customHeight,
+        words,
+      }),
+      generateAIScript(candidate, words, platform, language),
+    ]);
 
     const thumbPath = output.outputPath.replace(".mp4", "-thumb.jpg");
     const thumbnailUrl = output.downloadUrl.replace(".mp4", "-thumb.jpg");
@@ -181,6 +191,7 @@ async function renderCandidate(
       previewUrl: output.downloadUrl,
       thumbnailUrl,
       score: candidate.score,
+      reason: candidate.reason,
       hook: candidate.suggestedHook,
       title: candidate.title,
       caption: candidate.suggestedCaption,
@@ -188,6 +199,7 @@ async function renderCandidate(
       startTime: candidate.startTime,
       endTime: candidate.endTime,
       words: words || [],
+      aiScript,
     };
   } catch (error) {
     return {
@@ -196,6 +208,7 @@ async function renderCandidate(
       previewUrl: null,
       thumbnailUrl: null,
       score: candidate.score,
+      reason: candidate.reason,
       hook: candidate.suggestedHook,
       title: candidate.title,
       caption: candidate.suggestedCaption,
@@ -204,6 +217,67 @@ async function renderCandidate(
       endTime: candidate.endTime,
       error: error instanceof Error ? error.message : "Clip render failed.",
     };
+  }
+}
+
+async function generateAIScript(
+  candidate: ClipCandidate,
+  words: Array<{ word: string; start: number; end: number }> | undefined,
+  platform: string,
+  language: string
+): Promise<{ hook: string; caption: string; hashtags: string[] } | undefined> {
+  try {
+    const clipWords = (words || []).filter(
+      (w) => w.end > candidate.startTime && w.start < candidate.endTime
+    );
+    const transcript =
+      clipWords.length > 0
+        ? clipWords.map((w) => w.word).join(" ")
+        : candidate.suggestedCaption || candidate.title;
+
+    const completion = await mimo.chat.completions.create({
+      model: process.env.MIMO_MODEL || "mimo-v2.5-pro",
+      messages: [
+        {
+          role: "system",
+          content:
+            "You are a viral content copywriter. Generate engaging social media copy for a short video clip. Return ONLY valid JSON.",
+        },
+        {
+          role: "user",
+          content: `Clip: ${candidate.title}
+Platform: ${platform}
+Duration: ${Math.round(candidate.duration)}s
+${language !== "auto" ? `Language: ${language}` : ""}
+Transcript: "${transcript}"
+
+Return JSON:
+{
+  "hook": "string (max 80 chars, attention-grabbing opening line)",
+  "caption": "string (max 300 chars, engaging caption)",
+  "hashtags": ["string", "string", "string", "string", "string"] (5-7 relevant tags without #)
+}`,
+        },
+      ],
+      temperature: 0.8,
+    });
+
+    const raw = completion.choices[0]?.message?.content;
+    if (!raw) return undefined;
+
+    const cleaned = raw.replace(/```json/g, "").replace(/```/g, "").trim();
+    const result = JSON.parse(cleaned);
+
+    return {
+      hook: String(result.hook || "").slice(0, 120),
+      caption: String(result.caption || "").slice(0, 400),
+      hashtags: Array.isArray(result.hashtags)
+        ? result.hashtags.map((t: unknown) => String(t)).slice(0, 10)
+        : [],
+    };
+  } catch (err) {
+    console.error("AI script generation failed:", err);
+    return undefined;
   }
 }
 

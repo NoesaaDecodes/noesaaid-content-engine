@@ -101,6 +101,7 @@ type ViralClip = {
   downloadUrl: string | null;
   previewUrl: string | null;
   score: number;
+  reason: string;
   hook: string;
   title: string;
   caption: string;
@@ -108,6 +109,7 @@ type ViralClip = {
   startTime: number;
   endTime: number;
   words?: Array<{ word: string; start: number; end: number }>;
+  aiScript?: { hook: string; caption: string; hashtags: string[] };
   error?: string;
 };
 
@@ -746,14 +748,28 @@ export function ViralClipStudio({
                           {clip.title}
                         </h3>
                       </div>
-                      <span className="shrink-0 rounded-lg bg-cyan-400 px-2.5 py-1 text-sm font-bold text-black">
-                        {clip.score}
-                      </span>
+                      <div className="group relative shrink-0">
+                        <span className="rounded-lg bg-cyan-400 px-2.5 py-1 text-sm font-bold text-black cursor-default">
+                          {clip.score}
+                        </span>
+                        <div className="pointer-events-none absolute bottom-full right-0 mb-2 w-52 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-[11px] text-zinc-300 opacity-0 shadow-lg transition group-hover:opacity-100">
+                          <p className="font-semibold text-white mb-1">Viral Score: {clip.score}/100</p>
+                          <p className="text-zinc-400 leading-relaxed">{clip.reason}</p>
+                        </div>
+                      </div>
                     </div>
 
                     <p className="mb-3 text-sm leading-relaxed text-zinc-400">
                       {clip.hook}
                     </p>
+
+                    {/* AI Script Preview */}
+                    {clip.aiScript ? (
+                      <div className="mb-3 rounded-lg border border-cyan-400/20 bg-cyan-400/5 px-3 py-2">
+                        <p className="text-[10px] font-medium uppercase text-cyan-400/70 mb-1">AI Hook</p>
+                        <p className="text-xs text-cyan-300 leading-relaxed">{clip.aiScript.hook}</p>
+                      </div>
+                    ) : null}
 
                     {/* Caption */}
                     <button
@@ -816,6 +832,12 @@ export function ViralClipStudio({
                               "studio-source",
                               activeSourcePath
                             );
+                            if (clip.aiScript) {
+                              sessionStorage.setItem(
+                                "studio-ai-script",
+                                JSON.stringify(clip.aiScript)
+                              );
+                            }
                             window.location.href = `/studio/${encodeURIComponent(clip.filename?.replace(".mp4", "") || "clip")}`;
                           }}
                           className="flex h-9 items-center justify-center gap-2 rounded-lg border border-cyan-400/30 bg-cyan-400/5 px-4 text-sm font-medium text-cyan-400 transition hover:bg-cyan-400/10"

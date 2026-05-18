@@ -1,4 +1,5 @@
 import ffmpeg from "fluent-ffmpeg";
+import { execFile } from "node:child_process";
 import path from "node:path";
 import {
   createClipOutputPath,
@@ -144,6 +145,56 @@ async function probeHasAudio(sourcePath: string): Promise<boolean> {
   });
 }
 
+type CropRect = { w: number; h: number; x: number; y: number };
+
+async function detectCrop(
+  sourcePath: string,
+  startTime: number,
+  duration: number
+): Promise<CropRect | null> {
+  configureFfmpegPath();
+
+  const ffmpegPath = process.env.FFMPEG_PATH || "ffmpeg";
+  const args = [
+    "-y",
+    "-ss", Math.max(0, startTime).toString(),
+    "-t", duration.toString(),
+    "-i", sourcePath,
+    "-vf", "cropdetect=limit=24:round=2:skip=2",
+    "-f", "null",
+    "-",
+  ];
+
+  return new Promise((resolve) => {
+    execFile(ffmpegPath, args, { timeout: 30_000, maxBuffer: 5 * 1024 * 1024 }, (_error, _stdout, stderr) => {
+      const output = stderr || "";
+      const crops: CropRect[] = [];
+
+      for (const line of output.split("\n")) {
+        const match = line.match(/crop=(\d+):(\d+):(\d+):(\d+)/);
+        if (match) {
+          crops.push({
+            w: parseInt(match[1], 10),
+            h: parseInt(match[2], 10),
+            x: parseInt(match[3], 10),
+            y: parseInt(match[4], 10),
+          });
+        }
+      }
+
+      if (!crops.length) {
+        resolve(null);
+        return;
+      }
+
+      // Use median values
+      crops.sort((a, b) => a.w - b.w);
+      const mid = Math.floor(crops.length / 2);
+      resolve(crops[mid]);
+    });
+  });
+}
+
 async function runClipRender({
   sourcePath,
   outputPath,
@@ -186,11 +237,17 @@ async function runClipRender({
   const w = isDraft ? Math.min(dims.w, 720) : dims.w;
   const h = isDraft ? Math.min(dims.h, 1280) : dims.h;
 
-  if (smartCrop && !isDraft) {
-    console.log("[SMART CROP] requested — using center crop (cropdetect not yet implemented)");
-  }
+  let scalePad = `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps=${fps}`;
 
-  const scalePad = `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps=${fps}`;
+  if (smartCrop && !isDraft) {
+    const detected = await detectCrop(sourcePath, startTime, duration);
+    if (detected) {
+      console.log("[CROP]", detected);
+      scalePad = `crop=${detected.w}:${detected.h}:${detected.x}:${detected.y},scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps=${fps}`;
+    } else {
+      console.log("[CROP] cropdetect failed, using center crop");
+    }
+  }
 
   const applyZoompan = !isDraft && isVerticalSource && duration <= 10;
   const baseVideo = applyZoompan

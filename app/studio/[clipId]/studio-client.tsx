@@ -146,6 +146,16 @@ export default function StudioClient() {
       setClip(parsed);
       setSourcePath(storedSource);
       setOriginalUrl(parsed.downloadUrl || parsed.previewUrl || "");
+
+      // Pre-fill from aiScript if available
+      const aiRaw = sessionStorage.getItem("studio-ai-script");
+      if (aiRaw) {
+        const ai = JSON.parse(aiRaw) as { hook?: string; caption?: string; hashtags?: string[] };
+        if (ai.hook) setHook(ai.hook);
+        if (ai.caption) setCaption(ai.caption);
+        if (ai.hashtags?.length) setHashtags(ai.hashtags.join(", "));
+        sessionStorage.removeItem("studio-ai-script");
+      }
     } catch {
       window.location.href = "/clips";
     }
@@ -600,7 +610,7 @@ function insertAtCursor(
               <div className="space-y-3 p-3">
                 {/* Color */}
                 <div>
-                  <p className="mb-1.5 text-[11px] font-medium uppercase text-zinc-500">
+                  <p className="mb-1.5 text-[11px] font-medium uppercase text-zinc-500" title="Warna teks caption di video">
                     Color
                   </p>
                   <div className="flex gap-1.5">
@@ -638,7 +648,7 @@ function insertAtCursor(
 
                 {/* Size */}
                 <div>
-                  <p className="mb-1.5 text-[11px] font-medium uppercase text-zinc-500">
+                  <p className="mb-1.5 text-[11px] font-medium uppercase text-zinc-500" title="Ukuran font caption">
                     Size
                   </p>
                   <div className="flex gap-1.5">
@@ -661,7 +671,7 @@ function insertAtCursor(
 
                 {/* Background */}
                 <div>
-                  <p className="mb-1.5 text-[11px] font-medium uppercase text-zinc-500">
+                  <p className="mb-1.5 text-[11px] font-medium uppercase text-zinc-500" title="Latar belakang teks">
                     Background
                   </p>
                   <div className="flex gap-1.5">
@@ -684,7 +694,7 @@ function insertAtCursor(
 
                 {/* Caption Position */}
                 <div>
-                  <p className="mb-1.5 text-[11px] font-medium uppercase text-zinc-500">
+                  <p className="mb-1.5 text-[11px] font-medium uppercase text-zinc-500" title="Posisi caption di frame">
                     Caption Pos
                   </p>
                   <div className="flex gap-1.5">
@@ -712,7 +722,7 @@ function insertAtCursor(
 
                 {/* Hook Position */}
                 <div>
-                  <p className="mb-1.5 text-[11px] font-medium uppercase text-zinc-500">
+                  <p className="mb-1.5 text-[11px] font-medium uppercase text-zinc-500" title="Posisi hook text di frame">
                     Hook Pos
                   </p>
                   <div className="flex gap-1.5">
@@ -740,7 +750,7 @@ function insertAtCursor(
 
                 {/* Caption Effect */}
                 <div>
-                  <p className="mb-1.5 text-[11px] font-medium uppercase text-zinc-500">
+                  <p className="mb-1.5 text-[11px] font-medium uppercase text-zinc-500" title="Animasi kemunculan teks">
                     Effect
                   </p>
                   <div className="flex gap-1.5">
