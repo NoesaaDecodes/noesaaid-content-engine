@@ -12,7 +12,7 @@ export const maxDuration = 120;
 
 const TranscribeSchema = z.object({
   sourcePath: z.string().trim().min(1).max(500),
-  model: z.enum(["tiny", "base", "small", "medium", "large"]).default("small"),
+  model: z.enum(["tiny", "base", "small", "medium", "large"]).default("base"),
   language: z.string().min(2).max(5).optional(),
 });
 

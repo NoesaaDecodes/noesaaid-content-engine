@@ -2,7 +2,7 @@
 """Transcribe a video file using faster-whisper.
 
 Usage:
-    python scripts/transcribe.py <video_path> [--model small] [--language id]
+    python scripts/transcribe.py <video_path> [--model base] [--language id]
 
 Output: JSON with segments, words, and silences.
 """
@@ -136,7 +136,7 @@ def main():
     audio_path = extract_audio(str(video_path))
 
     try:
-        print(f"Transcribing with model={args.model}...", file=sys.stderr)
+        print(f"Using model: {args.model}", file=sys.stderr)
         result = transcribe(audio_path, model_size=args.model, language=args.language)
         result["source"] = str(video_path)
         result["model"] = args.model

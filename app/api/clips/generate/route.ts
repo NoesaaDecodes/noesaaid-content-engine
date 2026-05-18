@@ -209,12 +209,13 @@ async function transcribeSource(
 ): Promise<TranscriptionWord[]> {
   try {
     const scriptPath = path.join(process.cwd(), "scripts", "transcribe.py");
-    const args = [scriptPath, resolvedPath, "--model", "small"];
+    const args = [scriptPath, resolvedPath, "--model", "base"];
     if (language !== "auto") {
       args.push("--language", language);
     }
+    console.log("[STT] timeout set to 240s");
     const { stdout } = await execFileAsync("python", args, {
-      timeout: 120_000,
+      timeout: 240_000,
       maxBuffer: 10 * 1024 * 1024,
     });
     const result = JSON.parse(stdout);
