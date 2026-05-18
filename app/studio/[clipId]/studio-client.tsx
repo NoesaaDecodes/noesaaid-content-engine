@@ -36,6 +36,7 @@ type ClipData = {
   endTime: number;
   platform?: string;
   words?: Array<{ word: string; start: number; end: number }>;
+  insights?: string[];
 };
 
 type StudioRenderResponse =
@@ -149,6 +150,17 @@ export default function StudioClient() {
 
   function containsEmoji(text: string): boolean {
   return /[\u{1F000}-\u{1FFFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/u.test(text);
+}
+
+function scoreBadgeClass(score: number): string {
+  if (score >= 80) return "bg-cyan-400 text-black shadow-[0_0_8px_rgba(34,211,238,0.5)]";
+  if (score >= 60) return "bg-emerald-500 text-black";
+  if (score >= 40) return "bg-yellow-500 text-black";
+  return "bg-zinc-600 text-zinc-300";
+}
+
+function isInsightWarning(text: string): boolean {
+  return /^warn|^⚠|low |weak |poor |slow /i.test(text);
 }
 
 function insertAtCursor(
@@ -396,10 +408,33 @@ function insertAtCursor(
                   {hasWords ? "Transcript available" : "No transcript"}
                 </span>
               </div>
-              <span className="rounded-lg bg-cyan-400 px-2.5 py-1 text-sm font-bold text-black">
+              <span className={`rounded-lg px-2.5 py-1 text-sm font-bold ${scoreBadgeClass(clip.score)}`}>
                 {clip.score}
               </span>
             </div>
+
+            {/* Retention Insights */}
+            {clip.insights && clip.insights.length > 0 ? (
+              <div className="flex flex-wrap gap-1.5">
+                {clip.insights.slice(0, 3).map((insight, i) => (
+                  <span
+                    key={i}
+                    className={`rounded-md px-2 py-0.5 text-[10px] font-medium ${
+                      isInsightWarning(insight)
+                        ? "bg-yellow-500/10 text-yellow-400"
+                        : "bg-emerald-500/10 text-emerald-400"
+                    }`}
+                  >
+                    {isInsightWarning(insight) ? insight : `✓ ${insight}`}
+                  </span>
+                ))}
+                {clip.insights.length > 3 ? (
+                  <span className="rounded-md bg-zinc-800 px-2 py-0.5 text-[10px] text-zinc-500">
+                    +{clip.insights.length - 3} more
+                  </span>
+                ) : null}
+              </div>
+            ) : null}
 
             {/* Action buttons — shown after render */}
             {finalUrl && !isRendering ? (

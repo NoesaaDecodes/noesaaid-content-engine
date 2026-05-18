@@ -209,10 +209,14 @@ export default function MusicPicker({
           {filtered.map((track) => {
             const isSelected = track.filename === selectedFilename;
             return (
-              <button
+              <div
                 key={track.id}
-                type="button"
+                role="button"
+                tabIndex={0}
                 onClick={() => onSelect(isSelected ? null : track.filename)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") onSelect(isSelected ? null : track.filename);
+                }}
                 className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition ${
                   isSelected
                     ? "border border-cyan-400/30 bg-cyan-400/10"
@@ -255,7 +259,7 @@ export default function MusicPicker({
                     ✕
                   </span>
                 ) : null}
-              </button>
+              </div>
             );
           })}
         </div>
