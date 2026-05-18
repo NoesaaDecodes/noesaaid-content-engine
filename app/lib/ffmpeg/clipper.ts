@@ -146,19 +146,75 @@ async function probeHasAudio(sourcePath: string): Promise<boolean> {
 }
 
 type CropRect = { w: number; h: number; x: number; y: number };
+type FaceCropResult = CropRect & { faceX: number; faceY: number; method: string };
 
-async function detectCrop(
+async function detectFaceCrop(
+  sourcePath: string,
+  startTime: number,
+  duration: number,
+  targetW: number,
+  targetH: number
+): Promise<FaceCropResult | null> {
+  configureFfmpegPath();
+
+  // Step 1: Probe source dimensions
+  const sourceDims = await probeVideoDimensions(sourcePath);
+  const isLandscapeToVertical = sourceDims.w > sourceDims.h && targetH > targetW;
+
+  // Step 2: Try cropdetect for content region
+  const cropResult = await runCropdetect(sourcePath, startTime, duration);
+
+  if (!cropResult) {
+    return null;
+  }
+
+  // Step 3: For landscape→vertical, try motion-based face detection
+  if (isLandscapeToVertical) {
+    const motionCenter = await detectMotionCenter(sourcePath, startTime, duration, sourceDims.w, sourceDims.h);
+
+    if (motionCenter) {
+      // Use motion center as face position
+      const faceX = clampNumber(Math.round(motionCenter.x - targetW / 2), 0, sourceDims.w - targetW);
+      const faceY = clampNumber(Math.round(motionCenter.y - targetH / 2), 0, sourceDims.h - targetH);
+
+      console.log(`[FACE CROP] motion center: (${motionCenter.x}, ${motionCenter.y}), crop offset: (${faceX}, ${faceY})`);
+
+      return {
+        w: cropResult.w,
+        h: cropResult.h,
+        x: faceX,
+        y: faceY,
+        faceX: motionCenter.x,
+        faceY: motionCenter.y,
+        method: "motion",
+      };
+    }
+  }
+
+  // Step 4: Fallback to cropdetect region center
+  const centerX = cropResult.x + Math.round(cropResult.w / 2);
+  const centerY = cropResult.y + Math.round(cropResult.h / 2);
+
+  console.log(`[FACE CROP] fallback to cropdetect center: (${centerX}, ${centerY})`);
+
+  return {
+    ...cropResult,
+    faceX: centerX,
+    faceY: centerY,
+    method: "cropdetect",
+  };
+}
+
+async function runCropdetect(
   sourcePath: string,
   startTime: number,
   duration: number
 ): Promise<CropRect | null> {
-  configureFfmpegPath();
-
   const ffmpegPath = process.env.FFMPEG_PATH || "ffmpeg";
   const args = [
     "-y",
     "-ss", Math.max(0, startTime).toString(),
-    "-t", duration.toString(),
+    "-t", Math.min(duration, 30).toString(),
     "-i", sourcePath,
     "-vf", "cropdetect=limit=24:round=2:skip=2",
     "-f", "null",
@@ -187,10 +243,124 @@ async function detectCrop(
         return;
       }
 
-      // Use median values
       crops.sort((a, b) => a.w - b.w);
       const mid = Math.floor(crops.length / 2);
       resolve(crops[mid]);
+    });
+  });
+}
+
+type MotionPoint = { x: number; y: number };
+
+async function detectMotionCenter(
+  sourcePath: string,
+  startTime: number,
+  duration: number,
+  sourceW: number,
+  sourceH: number
+): Promise<MotionPoint | null> {
+  const ffmpegPath = process.env.FFMPEG_PATH || "ffmpeg";
+
+  // Sample frames at different points and analyze brightness/contrast distribution
+  // We sample a few frames and analyze brightness variation to find motion region
+  const samplePoints = [0.2, 0.5, 0.8].map((p) => Math.max(0, startTime + duration * p));
+
+  const results: MotionPoint[] = [];
+
+  for (const sampleTime of samplePoints) {
+    const result = await analyzeFrameMotion(ffmpegPath, sourcePath, sampleTime, sourceW, sourceH);
+    if (result) {
+      results.push(result);
+    }
+  }
+
+  if (!results.length) {
+    return null;
+  }
+
+  // Average the motion centers
+  const avgX = Math.round(results.reduce((s, r) => s + r.x, 0) / results.length);
+  const avgY = Math.round(results.reduce((s, r) => s + r.y, 0) / results.length);
+
+  return { x: avgX, y: avgY };
+}
+
+async function analyzeFrameMotion(
+  ffmpegPath: string,
+  sourcePath: string,
+  sampleTime: number,
+  sourceW: number,
+  sourceH: number
+): Promise<MotionPoint | null> {
+  // Use a simple approach: extract a frame, split into grid, find region with highest contrast
+  // This approximates "where is the interesting content" without needing opencv
+  const gridSize = 3;
+  const cellW = Math.floor(sourceW / gridSize);
+  const cellH = Math.floor(sourceH / gridSize);
+
+  // Extract raw pixel data for a small thumbnail
+  const thumbW = 96;
+  const thumbH = Math.round((thumbW / sourceW) * sourceH);
+  const args = [
+    "-y",
+    "-ss", sampleTime.toString(),
+    "-i", sourcePath,
+    "-vf", `scale=${thumbW}:${thumbH}:force_original_aspect_ratio=decrease`,
+    "-frames:v", "1",
+    "-f", "rawvideo",
+    "-pix_fmt", "gray",
+    "-",
+  ];
+
+  return new Promise((resolve) => {
+    execFile(ffmpegPath, args, { timeout: 15_000, maxBuffer: 2 * 1024 * 1024, encoding: "buffer" }, (_error, stdout) => {
+      const buf = Buffer.isBuffer(stdout) ? stdout : Buffer.from(stdout || "");
+      if (buf.length < thumbW * thumbH) {
+        resolve(null);
+        return;
+      }
+
+      const pixels = buf;
+      const cellWidth = Math.floor(thumbW / gridSize);
+      const cellHeight = Math.floor(thumbH / gridSize);
+
+      let bestScore = -1;
+      let bestX = Math.floor(sourceW / 2);
+      let bestY = Math.floor(sourceH / 2);
+
+      for (let gy = 0; gy < gridSize; gy++) {
+        for (let gx = 0; gx < gridSize; gx++) {
+          let sum = 0;
+          let sumSq = 0;
+          let count = 0;
+
+          for (let y = gy * cellHeight; y < (gy + 1) * cellHeight && y < thumbH; y++) {
+            for (let x = gx * cellWidth; x < (gx + 1) * cellWidth && x < thumbW; x++) {
+              const val = pixels[y * thumbW + x];
+              if (val !== undefined) {
+                sum += val;
+                sumSq += val * val;
+                count++;
+              }
+            }
+          }
+
+          if (count === 0) continue;
+
+          const mean = sum / count;
+          const variance = sumSq / count - mean * mean;
+          // Score = variance (contrast) + brightness bonus (faces tend to be brighter)
+          const score = variance + mean * 0.3;
+
+          if (score > bestScore) {
+            bestScore = score;
+            bestX = (gx + 0.5) * cellW;
+            bestY = (gy + 0.5) * cellH;
+          }
+        }
+      }
+
+      resolve({ x: Math.round(bestX), y: Math.round(bestY) });
     });
   });
 }
@@ -240,12 +410,14 @@ async function runClipRender({
   let scalePad = `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps=${fps}`;
 
   if (smartCrop && !isDraft) {
-    const detected = await detectCrop(sourcePath, startTime, duration);
-    if (detected) {
-      console.log("[CROP]", detected);
-      scalePad = `crop=${detected.w}:${detected.h}:${detected.x}:${detected.y},scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps=${fps}`;
+    const faceCrop = await detectFaceCrop(sourcePath, startTime, duration, w, h);
+    if (faceCrop) {
+      const xOffset = clampNumber(faceCrop.faceX - Math.round(w / 2), 0, Math.max(0, faceCrop.w - w));
+      const yOffset = clampNumber(faceCrop.faceY - Math.round(h / 2), 0, Math.max(0, faceCrop.h - h));
+      console.log(`[FACE CROP] method=${faceCrop.method} face=(${faceCrop.faceX},${faceCrop.faceY}) offset=(${xOffset},${yOffset})`);
+      scalePad = `crop=${Math.min(faceCrop.w, w)}:${Math.min(faceCrop.h, h)}:${xOffset}:${yOffset},scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps=${fps}`;
     } else {
-      console.log("[CROP] cropdetect failed, using center crop");
+      console.log("[FACE CROP] detection failed, using center crop");
     }
   }
 
