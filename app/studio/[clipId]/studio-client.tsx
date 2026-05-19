@@ -11,6 +11,8 @@ import {
   Music,
   Play,
   RotateCcw,
+  Sparkles,
+  Wand2,
 } from "lucide-react";
 import {
   defaultCaptionStyleParams,
@@ -20,6 +22,11 @@ import {
   type CaptionBackground,
   type CaptionPosition,
 } from "@/app/lib/render-settings";
+import { analyzeHookStrength, type HookAnalysis } from "@/app/lib/hooks/hook-analyzer";
+import type { HookType } from "@/app/lib/hooks/hook-patterns";
+import { TONE_PRESETS } from "@/app/lib/tones/tone-presets";
+import { CTA_TYPES } from "@/app/lib/cta/cta-engine";
+import { VISUAL_PRESETS, type VisualPreset } from "@/app/lib/presets/visual-presets";
 import EmojiPicker from "@/app/components/emoji-picker";
 import MusicPicker from "@/app/components/music-picker";
 import { showToast } from "@/app/components/toast";
@@ -87,6 +94,7 @@ const backgroundOpts: Array<{
   { value: "none", label: "None" },
   { value: "dark", label: "Dark" },
   { value: "light", label: "Blur" },
+  { value: "glow", label: "Glow" },
 ];
 
 const positionOpts: Array<{ value: CaptionPosition; icon: string }> = [
@@ -102,6 +110,7 @@ const effectOpts = [
   { value: "karaoke" as const, label: "Karaoke" },
   { value: "bounce" as const, label: "Bounce" },
   { value: "punch" as const, label: "Punch" },
+  { value: "shake" as const, label: "Shake" },
 ];
 
 export default function StudioClient() {
@@ -126,8 +135,23 @@ export default function StudioClient() {
   const [musicVolume, setMusicVolume] = useState(30);
   const [musicEnabled, setMusicEnabled] = useState(false);
   const [captionEffect, setCaptionEffect] = useState<
-    "fade" | "pop" | "slide-up" | "karaoke" | "bounce" | "punch"
+    "fade" | "pop" | "slide-up" | "karaoke" | "bounce" | "punch" | "shake"
   >("fade");
+  const [hookAnalysis, setHookAnalysis] = useState<HookAnalysis | null>(null);
+  const [isRewriting, setIsRewriting] = useState(false);
+  const [rewriteAlternatives, setRewriteAlternatives] = useState<
+    Array<{ type: string; text: string; score: number }>
+  >([]);
+  const [selectedHookType, setSelectedHookType] = useState<HookType | "best">("best");
+  const [selectedTone, setSelectedTone] = useState("auto");
+  const [cta, setCta] = useState("");
+  const [isGeneratingCTA, setIsGeneratingCTA] = useState(false);
+  const [selectedCTAType, setSelectedCTAType] = useState("auto");
+  const [patternSuggestions, setPatternSuggestions] = useState<
+    Array<{ id: string; text: string; type: string; virality: number }>
+  >([]);
+  const [selectedPreset, setSelectedPreset] = useState<string>("custom");
+  const [blurBackground, setBlurBackground] = useState(false);
 
   const hookRef = useRef<HTMLInputElement>(null);
   const captionRef = useRef<HTMLTextAreaElement>(null);
@@ -160,6 +184,114 @@ export default function StudioClient() {
       window.location.href = "/clips";
     }
   }, []);
+
+  useEffect(() => {
+    if (!clip?.words || clip.words.length === 0) return;
+    const transcript = clip.words.map((w) => w.word).join(" ");
+    const params = new URLSearchParams({
+      transcript: transcript.slice(0, 200),
+      language: "auto",
+    });
+    fetch(`/api/patterns/suggest?${params}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (data.success && data.hooks) {
+          setPatternSuggestions(data.hooks);
+        }
+      })
+      .catch(() => {});
+  }, [clip?.words]);
+
+  useEffect(() => {
+    const result = analyzeHookStrength(hook);
+    setHookAnalysis(result);
+  }, [hook]);
+
+  async function rewriteHook() {
+    if (!clip || !hook.trim()) return;
+
+    setIsRewriting(true);
+    setRewriteAlternatives([]);
+
+    try {
+      const transcript = clip.words
+        ? clip.words.map((w) => w.word).join(" ")
+        : "";
+
+      const response = await fetch("/api/hooks/rewrite", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          originalHook: hook,
+          transcript: transcript.slice(0, 300),
+          platform: clip.platform || "reels",
+          language: "auto",
+          hookType: selectedHookType,
+        }),
+      });
+
+      const data = (await response.json()) as {
+        success: boolean;
+        hooks?: Array<{ type: string; text: string; score: number }>;
+        error?: string;
+        detail?: string;
+      };
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.detail || data.error || "Rewrite failed");
+      }
+
+      setRewriteAlternatives(data.hooks || []);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Rewrite failed", "error");
+    } finally {
+      setIsRewriting(false);
+    }
+  }
+
+  async function generateCTA() {
+    if (!clip) return;
+
+    setIsGeneratingCTA(true);
+
+    try {
+      const transcript = clip.words
+        ? clip.words.map((w) => w.word).join(" ")
+        : "";
+
+      const response = await fetch("/api/cta/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          transcript: transcript.slice(0, 300),
+          platform: clip.platform || "reels",
+          language: "auto",
+          tone: selectedTone !== "auto" ? selectedTone : undefined,
+          ctaType: selectedCTAType !== "auto" ? selectedCTAType : undefined,
+        }),
+      });
+
+      const data = (await response.json()) as {
+        success: boolean;
+        cta?: string;
+        error?: string;
+        detail?: string;
+      };
+
+      if (!response.ok || !data.success) {
+        throw new Error(data.detail || data.error || "CTA generation failed");
+      }
+
+      if (data.cta) {
+        setCta(data.cta);
+        showToast("CTA generated!", "success");
+      }
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "CTA generation failed", "error");
+    } finally {
+      setIsGeneratingCTA(false);
+    }
+  }
 
   function containsEmoji(text: string): boolean {
   return /[\u{1F000}-\u{1FFFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/u.test(text);
@@ -214,6 +346,7 @@ function insertAtCursor(
           clipTitle: clip.title,
           platform: clip.platform || "reels",
           duration: Math.round(duration),
+          tone: selectedTone !== "auto" ? selectedTone : undefined,
           words: clip.words,
         }),
       });
@@ -288,6 +421,7 @@ function insertAtCursor(
           musicPath: musicEnabled ? (selectedMusicFile ?? undefined) : undefined,
           musicVolume: musicEnabled ? musicVolume : undefined,
           captionEffect,
+          blurBackground,
         }),
       });
 
@@ -318,6 +452,20 @@ function insertAtCursor(
     value: CaptionStyleParams[K]
   ) {
     setStyleParams((prev) => ({ ...prev, [key]: value }));
+  }
+
+  function applyPreset(preset: VisualPreset) {
+    setSelectedPreset(preset.id);
+    setStyleParams({
+      fontColor: preset.fontColor,
+      fontSize: preset.fontSize,
+      background: preset.background,
+      position: preset.position,
+      hookPosition: preset.hookPosition,
+    });
+    setCaptionEffect(preset.captionEffect);
+    setBlurBackground(preset.blurBackground);
+    showToast(`Preset "${preset.label}" applied`, "success");
   }
 
   if (!clip) {
@@ -502,6 +650,40 @@ function insertAtCursor(
               </h2>
             </div>
 
+            {/* Tone Selector */}
+            <div>
+              <p className="mb-1.5 text-[11px] font-medium uppercase text-zinc-500">
+                Tone
+              </p>
+              <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-hide">
+                <button
+                  type="button"
+                  onClick={() => setSelectedTone("auto")}
+                  className={`shrink-0 rounded-md border px-2.5 py-1 text-[11px] font-medium transition ${
+                    selectedTone === "auto"
+                      ? "border-cyan-400/60 bg-cyan-400/15 text-cyan-400"
+                      : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:border-zinc-700"
+                  }`}
+                >
+                  Auto
+                </button>
+                {TONE_PRESETS.map((tone) => (
+                  <button
+                    key={tone.id}
+                    type="button"
+                    onClick={() => setSelectedTone(tone.id)}
+                    className={`shrink-0 rounded-md border px-2.5 py-1 text-[11px] font-medium transition ${
+                      selectedTone === tone.id
+                        ? "border-cyan-400/60 bg-cyan-400/15 text-cyan-400"
+                        : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:border-zinc-700"
+                    }`}
+                  >
+                    {tone.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {/* AI Generate Button */}
             <button
               type="button"
@@ -560,6 +742,138 @@ function insertAtCursor(
                   Emoji akan dihapus dari video, tetap ada di caption untuk posting
                 </p>
               ) : null}
+
+              {/* Viral Pattern Suggestions */}
+              {patternSuggestions.length > 0 ? (
+                <div className="mt-2 space-y-1">
+                  <p className="text-[10px] text-zinc-500">
+                    💡 Viral hooks serupa:
+                  </p>
+                  {patternSuggestions.map((s) => (
+                    <button
+                      key={s.id}
+                      type="button"
+                      onClick={() => {
+                        setHook(s.text);
+                        showToast("Hook copied!", "success");
+                      }}
+                      className="flex w-full items-center gap-2 rounded-md border border-zinc-800 bg-zinc-900/50 px-2.5 py-1.5 text-left text-[11px] text-zinc-300 transition hover:border-cyan-400/30 hover:bg-zinc-900"
+                    >
+                      <span className="flex-1 truncate">{s.text}</span>
+                      <span className="shrink-0 text-[10px] text-cyan-400/60">
+                        {s.virality}/10
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+
+              {/* Hook Strength Meter */}
+              {hook.trim() && hookAnalysis ? (
+                <div className="mt-2 space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[10px] text-zinc-500">
+                      Hook strength
+                      {hookAnalysis.type !== "generic" ? (
+                        <span className="ml-1 text-cyan-400/70">
+                          ({hookAnalysis.type})
+                        </span>
+                      ) : null}
+                    </span>
+                    <span
+                      className={`text-[11px] font-bold ${
+                        hookAnalysis.score >= 70
+                          ? "text-emerald-400"
+                          : hookAnalysis.score >= 40
+                            ? "text-yellow-400"
+                            : "text-red-400"
+                      }`}
+                    >
+                      {hookAnalysis.score}
+                    </span>
+                  </div>
+                  <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-800">
+                    <div
+                      className={`h-full rounded-full transition-all duration-300 ${
+                        hookAnalysis.score >= 70
+                          ? "bg-emerald-400"
+                          : hookAnalysis.score >= 40
+                            ? "bg-yellow-400"
+                            : "bg-red-400"
+                      }`}
+                      style={{ width: `${hookAnalysis.score}%` }}
+                    />
+                  </div>
+                  {hookAnalysis.suggestions.length > 0 ? (
+                    <p className="text-[10px] text-zinc-500">
+                      {hookAnalysis.suggestions[0]}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {/* Hook Type Selector + Rewrite */}
+              <div className="mt-2 flex items-center gap-1.5">
+                <select
+                  value={selectedHookType}
+                  onChange={(e) =>
+                    setSelectedHookType(e.target.value as HookType | "best")
+                  }
+                  className="h-7 rounded-md border border-zinc-800 bg-zinc-900 px-2 text-[10px] text-zinc-400 outline-none transition focus:border-cyan-400/50"
+                >
+                  <option value="best">Auto</option>
+                  <option value="contrarian">Contrarian</option>
+                  <option value="shock">Shock</option>
+                  <option value="curiosity">Curiosity</option>
+                  <option value="story">Story</option>
+                  <option value="fear">Fear</option>
+                  <option value="urgency">Urgency</option>
+                </select>
+                <button
+                  type="button"
+                  disabled={isRewriting || !hook.trim()}
+                  onClick={() => void rewriteHook()}
+                  className="flex h-7 items-center gap-1.5 rounded-md border border-cyan-400/30 bg-cyan-400/5 px-2.5 text-[10px] font-medium text-cyan-400 transition hover:bg-cyan-400/10 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {isRewriting ? (
+                    <Loader2 className="size-3 animate-spin" />
+                  ) : (
+                    <Wand2 className="size-3" />
+                  )}
+                  Rewrite
+                </button>
+              </div>
+
+              {/* Rewrite Alternatives */}
+              {rewriteAlternatives.length > 0 ? (
+                <div className="mt-2 space-y-1">
+                  {rewriteAlternatives.map((alt, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => {
+                        setHook(alt.text);
+                        setRewriteAlternatives([]);
+                      }}
+                      className="flex w-full items-center gap-2 rounded-md border border-zinc-800 bg-zinc-900/50 px-2.5 py-1.5 text-left text-[11px] text-zinc-300 transition hover:border-cyan-400/30 hover:bg-zinc-900"
+                    >
+                      <Sparkles className="size-3 shrink-0 text-cyan-400/60" />
+                      <span className="flex-1 truncate">{alt.text}</span>
+                      <span
+                        className={`shrink-0 text-[10px] font-bold ${
+                          alt.score >= 70
+                            ? "text-emerald-400"
+                            : alt.score >= 40
+                              ? "text-yellow-400"
+                              : "text-zinc-500"
+                        }`}
+                      >
+                        {alt.score}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
             </div>
 
             {/* Caption */}
@@ -603,6 +917,99 @@ function insertAtCursor(
                 placeholder="#football, #futsal"
                 className="h-9 w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 text-xs text-white outline-none transition focus:border-cyan-400/50"
               />
+            </div>
+
+            {/* CTA (Call to Action) */}
+            <div>
+              <label className="mb-1 flex items-center justify-between text-[11px] font-medium uppercase text-zinc-500">
+                CTA (Call to Action)
+                <span className={cta.length > 90 ? "text-amber-400" : "text-zinc-600"}>
+                  {cta.length}/100
+                </span>
+              </label>
+              <input
+                type="text"
+                value={cta}
+                onChange={(e) => setCta(e.target.value)}
+                maxLength={100}
+                placeholder="Add a call to action..."
+                className="h-9 w-full rounded-lg border border-zinc-800 bg-zinc-950 px-3 text-xs text-white outline-none transition focus:border-cyan-400/50"
+              />
+              <div className="mt-1.5 flex items-center gap-1.5">
+                <select
+                  value={selectedCTAType}
+                  onChange={(e) => setSelectedCTAType(e.target.value)}
+                  className="h-7 rounded-md border border-zinc-800 bg-zinc-900 px-2 text-[10px] text-zinc-400 outline-none transition focus:border-cyan-400/50"
+                >
+                  <option value="auto">Auto</option>
+                  {CTA_TYPES.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.label}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  type="button"
+                  disabled={isGeneratingCTA}
+                  onClick={() => void generateCTA()}
+                  className="flex h-7 items-center gap-1.5 rounded-md border border-cyan-400/30 bg-cyan-400/5 px-2.5 text-[10px] font-medium text-cyan-400 transition hover:bg-cyan-400/10 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {isGeneratingCTA ? (
+                    <Loader2 className="size-3 animate-spin" />
+                  ) : (
+                    <Sparkles className="size-3" />
+                  )}
+                  Generate CTA
+                </button>
+                {cta ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const suffix = caption ? `\n\n${cta}` : cta;
+                      setCaption((prev) => (prev + suffix).slice(0, 300));
+                      showToast("CTA added to caption!", "success");
+                    }}
+                    className="flex h-7 items-center gap-1 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-2 text-[10px] font-medium text-emerald-400 transition hover:bg-emerald-500/10"
+                  >
+                    Add to Caption
+                  </button>
+                ) : null}
+              </div>
+            </div>
+
+            {/* Quick Style Presets */}
+            <div>
+              <p className="mb-1.5 text-[11px] font-medium uppercase text-zinc-500">
+                Quick Style
+              </p>
+              <div className="flex gap-1.5 overflow-x-auto pb-1 scrollbar-hide">
+                {VISUAL_PRESETS.map((preset) => (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    onClick={() => applyPreset(preset)}
+                    className={`shrink-0 rounded-md border px-2.5 py-1 text-[11px] font-medium transition ${
+                      selectedPreset === preset.id
+                        ? "border-cyan-400/60 bg-cyan-400/15 text-cyan-400"
+                        : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:border-zinc-700"
+                    }`}
+                    title={preset.description}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => setSelectedPreset("custom")}
+                  className={`shrink-0 rounded-md border px-2.5 py-1 text-[11px] font-medium transition ${
+                    selectedPreset === "custom"
+                      ? "border-cyan-400/60 bg-cyan-400/15 text-cyan-400"
+                      : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:border-zinc-700"
+                  }`}
+                >
+                  Custom
+                </button>
+              </div>
             </div>
 
             {/* === Compact Style Controls === */}
@@ -769,6 +1176,27 @@ function insertAtCursor(
                       </button>
                     ))}
                   </div>
+                </div>
+
+                {/* Blur Background Toggle */}
+                <div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setBlurBackground(!blurBackground);
+                      setSelectedPreset("custom");
+                    }}
+                    className={`flex h-8 w-full items-center gap-2 rounded-lg border px-3 text-[11px] font-medium transition ${
+                      blurBackground
+                        ? "border-cyan-400/60 bg-cyan-400/15 text-cyan-400"
+                        : "border-zinc-800 bg-zinc-900 text-zinc-500 hover:border-zinc-700"
+                    }`}
+                  >
+                    Blur BG
+                    <span className="ml-auto text-[10px] text-zinc-500">
+                      {blurBackground ? "ON" : "OFF"}
+                    </span>
+                  </button>
                 </div>
 
                 {/* Music Toggle */}

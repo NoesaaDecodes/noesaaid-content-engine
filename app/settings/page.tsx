@@ -15,6 +15,7 @@ type AppSettings = {
   defaultColor: string;
   defaultSize: string;
   defaultPosition: string;
+  blurBackground: boolean;
 };
 
 const defaults: AppSettings = {
@@ -25,6 +26,7 @@ const defaults: AppSettings = {
   defaultColor: "#FFE600",
   defaultSize: "medium",
   defaultPosition: "bottom",
+  blurBackground: false,
 };
 
 function readSettings(): AppSettings {
@@ -199,7 +201,7 @@ export default function SettingsPage() {
               onChange={(e) => update("defaultEffect", e.target.value)}
               className="h-10 rounded-lg border border-zinc-800 bg-zinc-900 px-3 text-sm text-white outline-none focus:border-cyan-400/50"
             >
-              {["fade", "pop", "slide-up", "karaoke", "bounce", "punch"].map((e) => (
+              {["fade", "pop", "slide-up", "karaoke", "bounce", "punch", "shake"].map((e) => (
                 <option key={e} value={e}>{e}</option>
               ))}
             </select>
@@ -243,6 +245,21 @@ export default function SettingsPage() {
                 <option key={p} value={p}>{p}</option>
               ))}
             </select>
+          </SettingRow>
+          <SettingRow label="Blur background instead of black bars">
+            <button
+              type="button"
+              onClick={() => update("blurBackground", !settings.blurBackground)}
+              className={`relative h-6 w-11 rounded-full transition-colors ${
+                settings.blurBackground ? "bg-cyan-400" : "bg-zinc-700"
+              }`}
+            >
+              <span
+                className={`absolute left-0.5 top-0.5 size-5 rounded-full bg-white transition-transform ${
+                  settings.blurBackground ? "translate-x-5" : ""
+                }`}
+              />
+            </button>
           </SettingRow>
         </div>
       </section>

@@ -19,7 +19,7 @@ import type { ClipCandidate } from "@/app/lib/clips";
 
 const fps = 30;
 
-export type CaptionEffect = "fade" | "pop" | "slide-up" | "karaoke" | "bounce" | "punch";
+export type CaptionEffect = "fade" | "pop" | "slide-up" | "karaoke" | "bounce" | "punch" | "shake";
 
 type ClipRenderInput = {
   sourcePath: string;
@@ -36,6 +36,8 @@ type ClipRenderInput = {
   musicVolume?: number;
   captionEffect?: CaptionEffect;
   smartCrop?: boolean;
+  energyProfile?: number[];
+  blurBackground?: boolean;
 };
 
 export async function renderClip({
@@ -53,6 +55,8 @@ export async function renderClip({
   musicVolume,
   captionEffect,
   smartCrop,
+  energyProfile,
+  blurBackground,
 }: ClipRenderInput) {
   await ensureRenderDirectories();
 
@@ -91,6 +95,8 @@ export async function renderClip({
     musicVolume,
     captionEffect,
     smartCrop,
+    energyProfile,
+    blurBackground,
   });
 
   console.log("[RENDER TIME]", Date.now() - t0, "ms");
@@ -383,6 +389,8 @@ async function runClipRender({
   musicVolume,
   captionEffect,
   smartCrop,
+  energyProfile,
+  blurBackground,
 }: {
   sourcePath: string;
   outputPath: string;
@@ -401,6 +409,8 @@ async function runClipRender({
   musicVolume?: number;
   captionEffect?: CaptionEffect;
   smartCrop?: boolean;
+  energyProfile?: number[];
+  blurBackground?: boolean;
 }) {
   const quality = qualityOptions[settings.quality];
   const isDraft = settings.quality === "draft";
@@ -421,10 +431,25 @@ async function runClipRender({
     }
   }
 
+  const useBlurBg = blurBackground && !isDraft && !isVerticalSource && h > w;
   const applyZoompan = !isDraft && isVerticalSource && duration <= 10;
-  const baseVideo = applyZoompan
-    ? `[0:v]${scalePad},zoompan=z='min(zoom+0.0008,1.08)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${w}x${h}:fps=${fps},crop=iw:ih:0:0,format=yuv420p[vbase]`
-    : `[0:v]${scalePad},format=yuv420p[vbase]`;
+  const beatZoomExpr = buildBeatZoomExpr(energyProfile, duration);
+
+  let baseVideo: string;
+  const extraFilters: string[] = [];
+
+  if (useBlurBg) {
+    // Blurred background for landscape→vertical
+    const bgBlur = `[0:v]scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},boxblur=20:10[bgblur]`;
+    const fgScale = `[0:v]scale=${w}:${h}:force_original_aspect_ratio=decrease[fg]`;
+    const overlay = `[bgblur][fg]overlay=(W-w)/2:(H-h)/2:shortest=1,setsar=1,fps=${fps}[vblurred]`;
+    extraFilters.push(bgBlur, fgScale, overlay);
+    baseVideo = `[vblurred]format=yuv420p[vbase]`;
+  } else if (applyZoompan) {
+    baseVideo = `[0:v]${scalePad},zoompan=z='${beatZoomExpr}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${w}x${h}:fps=${fps},crop=iw:ih:0:0,format=yuv420p[vbase]`;
+  } else {
+    baseVideo = `[0:v]${scalePad},format=yuv420p[vbase]`;
+  }
 
   const progressEnable = `gte(t,0)`;
   const fontFile = getFontFile();
@@ -482,6 +507,7 @@ async function runClipRender({
       ];
 
   const filters = [
+    ...extraFilters,
     baseVideo,
     ...gradientFilters,
     ...textFilters.map((f, i) => {
@@ -564,6 +590,8 @@ function buildAlphaExpr(
       return `'if(lt(t-${ss}\\,0.10)\\,(t-${ss})/0.10\\,1)'`;
     case "punch":
       return `'if(lt(t-${ss}\\,0.06)\\,(t-${ss})/0.06\\,1)'`;
+    case "shake":
+      return `'if(lt(t-${ss}\\,0.04)\\,(t-${ss})/0.04\\,1)'`;
     case "slide-up":
       return `'if(lt(t-${ss}\\,0.12)\\,(t-${ss})/0.12\\,if(gt(t\\,${fadeEnd})\\,(${ee}-t)/0.08\\,1))'`;
     case "fade":
@@ -585,6 +613,11 @@ function buildYExpr(
   if (effect === "bounce") {
     const ss = s.toFixed(3);
     return `'${baseY}+abs(sin((t-${ss})*12))*8'`;
+  }
+  if (effect === "shake") {
+    const ss = s.toFixed(3);
+    const shakeEnd = (s + 0.2).toFixed(3);
+    return `'${baseY}+if(between(t\\,${ss}\\,${shakeEnd})\\,2*sin((t-${ss})*60)\\,0)'`;
   }
   return baseY;
 }
@@ -678,6 +711,10 @@ function buildWordCaptionFilters(
       } else if (granular.background === "light") {
         shadow = `:shadowx=2:shadowy=2:shadowcolor=white@0.6`;
         border = `:borderw=1:bordercolor=white@0.4`;
+      } else if (granular.background === "glow") {
+        // Glow uses multiple layers, handled below
+        shadow = "";
+        border = `:borderw=2:bordercolor=${fontColor}@0.8`;
       }
     } else {
       shadow =
@@ -698,10 +735,55 @@ function buildWordCaptionFilters(
     const yExpr = buildYExpr(effect, yPos, p.start);
     const fontsizeExpr = buildFontsizeExpr(effect, fontSize, p.start);
 
+    // Glow layers: outer glow (borderw=8) + mid glow (borderw=4) + sharp
+    const isGlow = useGranular && granular.background === "glow";
+    if (isGlow) {
+      const glowOuterLabel = `vglow1_${i}`;
+      const glowMidLabel = `vglow2_${i}`;
+      filters.push(
+        `[${prevLabel}]drawtext=${fontFile}text='${escaped}':fontsize=${fontsizeExpr}:fontcolor=${fontColor}:alpha=${alphaExpr}:borderw=8:bordercolor=${fontColor}@0.3:x='max(80,(w-text_w)/2)':y=${yExpr}:enable='between(t,${s},${e})'[${glowOuterLabel}]`
+      );
+      filters.push(
+        `[${glowOuterLabel}]drawtext=${fontFile}text='${escaped}':fontsize=${fontsizeExpr}:fontcolor=${fontColor}:alpha=${alphaExpr}:borderw=4:bordercolor=${fontColor}@0.5:x='max(80,(w-text_w)/2)':y=${yExpr}:enable='between(t,${s},${e})'[${glowMidLabel}]`
+      );
+      prevLabel = glowMidLabel;
+    }
+
     filters.push(
       `[${prevLabel}]drawtext=${fontFile}text='${escaped}':fontsize=${fontsizeExpr}:fontcolor=${fontColor}:alpha=${alphaExpr}${shadow}${border}:x='max(80,(w-text_w)/2)':y=${yExpr}:enable='between(t,${s},${e})'[${nextLabel}]`
     );
-    prevLabel = nextLabel;
+
+    // Punch word highlight: overlay last word with highlight color + glow
+    const phraseWords = p.text.split(/\s+/).filter(Boolean);
+    if (phraseWords.length > 0) {
+      const lastWord = phraseWords[phraseWords.length - 1];
+      const lastWordEscaped = escapeDrawtextText(lastWord);
+
+      if (lastWordEscaped) {
+        const baseUpper = fontColor.toUpperCase();
+        let highlightColor = "#FFE600";
+        if (baseUpper === "#FFFFFF") highlightColor = "#FFE600";
+        else if (baseUpper === "#FFE600" || baseUpper === "#00FFFF") highlightColor = "#FFFFFF";
+
+        const highlightSize = Math.round(fontSize * 1.1);
+        const prefixText = phraseWords.slice(0, -1).join(" ");
+        const avgCharWidth = fontSize * 0.55;
+        const totalCharsWidth = Math.round(p.text.length * avgCharWidth);
+        const prefixWidth = Math.round(prefixText.length * avgCharWidth);
+
+        const hlLabel = `vhl${i}`;
+        const hlFontsizeExpr = buildFontsizeExpr(effect, highlightSize, p.start);
+
+        filters.push(
+          `[${nextLabel}]drawtext=${fontFile}text='${lastWordEscaped}':fontsize=${hlFontsizeExpr}:fontcolor=${highlightColor}:alpha=${alphaExpr}${shadow}:borderw=2:bordercolor=${highlightColor}:x='max(80,(w-${totalCharsWidth})/2+${prefixWidth})':y=${yExpr}:enable='between(t,${s},${e})'[${hlLabel}]`
+        );
+        prevLabel = hlLabel;
+      } else {
+        prevLabel = nextLabel;
+      }
+    } else {
+      prevLabel = nextLabel;
+    }
   }
 
   return { filters, lastLabel: prevLabel };
@@ -755,12 +837,16 @@ function buildStaticCaptionFilters(
 
   let shadow = "";
   let border = "";
+  const isGlow = granular.background === "glow";
   if (granular.background === "dark") {
     shadow = `:shadowx=3:shadowy=3:shadowcolor=black@0.9`;
     border = `:borderw=2:bordercolor=black@0.8`;
   } else if (granular.background === "light") {
     shadow = `:shadowx=2:shadowy=2:shadowcolor=white@0.6`;
     border = `:borderw=1:bordercolor=white@0.4`;
+  } else if (isGlow) {
+    shadow = "";
+    border = `:borderw=2:bordercolor=${fontColor}@0.8`;
   }
 
   const filters: string[] = [];
@@ -776,6 +862,18 @@ function buildStaticCaptionFilters(
     const alphaExpr = buildAlphaExpr(effect, 0, hookEnd);
     const hookYExpr = buildYExpr(effect, hookY, 0);
     const hookFontsizeExpr = buildFontsizeExpr(effect, hookFontSize, 0);
+
+    if (isGlow) {
+      const glowOuterLabel = "vhook_glow1";
+      const glowMidLabel = "vhook_glow2";
+      filters.push(
+        `[${prevLabel}]drawtext=${fontFile}text='${escaped}':fontsize=${hookFontsizeExpr}:fontcolor=${fontColor}:alpha=${alphaExpr}:borderw=8:bordercolor=${fontColor}@0.3:x='max(60,(w-text_w)/2)':y=${hookYExpr}:enable='between(t,0,${hEnd})'[${glowOuterLabel}]`
+      );
+      filters.push(
+        `[${glowOuterLabel}]drawtext=${fontFile}text='${escaped}':fontsize=${hookFontsizeExpr}:fontcolor=${fontColor}:alpha=${alphaExpr}:borderw=4:bordercolor=${fontColor}@0.5:x='max(60,(w-text_w)/2)':y=${hookYExpr}:enable='between(t,0,${hEnd})'[${glowMidLabel}]`
+      );
+      prevLabel = glowMidLabel;
+    }
 
     filters.push(
       `[${prevLabel}]drawtext=${fontFile}text='${escaped}':fontsize=${hookFontsizeExpr}:fontcolor=${fontColor}:alpha=${alphaExpr}${shadow}${border}:x='max(60,(w-text_w)/2)':y=${hookYExpr}:enable='between(t,0,${hEnd})'[${label}]`
@@ -803,6 +901,19 @@ function buildStaticCaptionFilters(
         const alphaExpr = buildAlphaExpr(effect, lineStart, lineEnd);
         const yExpr = buildYExpr(effect, captionY, lineStart);
         const fontsizeExpr = buildFontsizeExpr(effect, fontSize, lineStart);
+
+        if (isGlow) {
+          const glowOuterLabel = `vcap_glow1_${i}`;
+          const glowMidLabel = `vcap_glow2_${i}`;
+          filters.push(
+            `[${prevLabel}]drawtext=${fontFile}text='${escaped}':fontsize=${fontsizeExpr}:fontcolor=${fontColor}:alpha=${alphaExpr}:borderw=8:bordercolor=${fontColor}@0.3:x='max(60,(w-text_w)/2)':y=${yExpr}:enable='between(t,${lineStart.toFixed(3)},${lineEnd.toFixed(3)})'[${glowOuterLabel}]`
+          );
+          filters.push(
+            `[${glowOuterLabel}]drawtext=${fontFile}text='${escaped}':fontsize=${fontsizeExpr}:fontcolor=${fontColor}:alpha=${alphaExpr}:borderw=4:bordercolor=${fontColor}@0.5:x='max(60,(w-text_w)/2)':y=${yExpr}:enable='between(t,${lineStart.toFixed(3)},${lineEnd.toFixed(3)})'[${glowMidLabel}]`
+          );
+          prevLabel = glowMidLabel;
+        }
+
         filters.push(
           `[${prevLabel}]drawtext=${fontFile}text='${escaped}':fontsize=${fontsizeExpr}:fontcolor=${fontColor}:alpha=${alphaExpr}${shadow}${border}:x='max(60,(w-text_w)/2)':y=${yExpr}:enable='between(t,${lineStart.toFixed(3)},${lineEnd.toFixed(3)})'[${label}]`
         );
@@ -812,6 +923,55 @@ function buildStaticCaptionFilters(
   }
 
   return { filters, lastLabel: prevLabel };
+}
+
+function buildBeatZoomExpr(
+  energyProfile?: number[],
+  clipDuration?: number
+): string {
+  // Always include opening punch at t=0.5
+  const openingPunch = buildPunchZoomAt(0.5);
+
+  if (!energyProfile || energyProfile.length === 0 || !clipDuration) {
+    return `min(${openingPunch}+zoom*0.0008,1.08)`;
+  }
+
+  // Find peak energy moments (top 20% or above 0.7)
+  const mean = energyProfile.reduce((s, v) => s + v, 0) / energyProfile.length;
+  const threshold = Math.max(0.7, mean + 0.15);
+  const peaks: number[] = [];
+
+  for (let i = 0; i < energyProfile.length; i++) {
+    if (energyProfile[i] >= threshold) {
+      peaks.push(i);
+    }
+  }
+
+  if (peaks.length === 0) {
+    return `min(${openingPunch}+zoom*0.0008,1.08)`;
+  }
+
+  // Build nested if expression for beat-sync zoom + opening punch
+  let expr = `${openingPunch}+zoom*0.0003`;
+
+  for (let i = peaks.length - 1; i >= 0; i--) {
+    const t = peaks[i].toFixed(1);
+    const tMid = (peaks[i] + 0.15).toFixed(1);
+    const tEnd = (peaks[i] + 0.30).toFixed(1);
+    const riseExpr = `1+0.05*(t-${t})/0.15`;
+    const fallExpr = `1.05-0.05*(t-${tMid})/0.15`;
+    const punchExpr = `if(between(t\\,${t}\\,${tMid})\\,${riseExpr}\\,if(between(t\\,${tMid}\\,${tEnd})\\,${fallExpr}\\,1))`;
+    expr = `if(between(t\\,${t}\\,${tEnd})\\,${punchExpr}*${expr}\\,${expr})`;
+  }
+
+  return `min(${expr},1.08)`;
+}
+
+function buildPunchZoomAt(timestamp: number): string {
+  const t = timestamp.toFixed(2);
+  const tMid = (timestamp + 0.15).toFixed(2);
+  const tEnd = (timestamp + 0.30).toFixed(2);
+  return `if(between(t\\,${t}\\,${tMid})\\,1+0.1*(t-${t})/0.15\\,if(between(t\\,${tMid}\\,${tEnd})\\,1.1-0.1*(t-${tMid})/0.15\\,1))`;
 }
 
 function toFFmpegPath(p: string): string {

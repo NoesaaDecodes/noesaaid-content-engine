@@ -1,4 +1,11 @@
 import ffmpeg from "fluent-ffmpeg";
+import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { analyzeAudio, type AudioAnalysis } from "@/app/lib/audio/audio-analyzer";
+import { scoreEmotionalEnergy, type EmotionScore } from "@/app/lib/audio/emotion-scorer";
+import { analyzeHookStrength } from "@/app/lib/hooks/hook-analyzer";
 import { defaultRenderSettings } from "@/app/lib/render-settings";
 import { buildRetentionPlan } from "@/app/lib/retention";
 import { getTemplateById } from "@/app/lib/templates";
@@ -27,7 +34,8 @@ export async function analyzeSourceVideo(
   options: ClipGenerationOptions,
   words?: TranscriptWord[]
 ): Promise<ClipGenerationResult> {
-  const duration = source.duration || (await probeVideoDuration(source.resolvedPath || source.sourcePath));
+  const sourcePath = source.resolvedPath || source.sourcePath;
+  const duration = source.duration || (await probeVideoDuration(sourcePath));
   const safeDuration = roundTime(duration);
 
   if (!Number.isFinite(safeDuration) || safeDuration <= 0) {
@@ -35,10 +43,17 @@ export async function analyzeSourceVideo(
   }
 
   const normalizedOptions = normalizeClipOptions(options);
+  const sceneChanges = await getSceneChanges(sourcePath);
+
+  // Run audio analysis on full source for caching
+  const fullAudio = await getAudioAnalysis(sourcePath, 0, safeDuration);
+
   const candidates = buildClipCandidates(
     safeDuration,
     normalizedOptions,
-    words
+    words,
+    sceneChanges,
+    fullAudio
   ).slice(0, normalizedOptions.maxClips);
 
   return {
@@ -87,6 +102,97 @@ export async function probeVideoDuration(sourcePath: string) {
   });
 }
 
+function hashSourcePath(sourcePath: string): string {
+  return createHash("sha256").update(sourcePath).digest("hex").slice(0, 12);
+}
+
+async function detectSceneChanges(sourcePath: string): Promise<number[]> {
+  const ffmpegPath = process.env.FFMPEG_PATH || "ffmpeg";
+  const args = [
+    "-i", sourcePath,
+    "-vf", "select='gt(scene,0.3)',showinfo",
+    "-f", "null",
+    "-",
+  ];
+
+  return new Promise((resolve) => {
+    execFile(ffmpegPath, args, { timeout: 60_000, maxBuffer: 10 * 1024 * 1024 }, (_error, _stdout, stderr) => {
+      const output = stderr || "";
+      const times: number[] = [];
+
+      for (const line of output.split("\n")) {
+        const match = line.match(/pts_time:(\d+\.?\d*)/);
+        if (match) {
+          times.push(parseFloat(match[1]));
+        }
+      }
+
+      resolve(times);
+    });
+  });
+}
+
+async function getSceneChanges(sourcePath: string): Promise<number[]> {
+  const hash = hashSourcePath(sourcePath);
+  const transcriptsDir = path.join(process.cwd(), "outputs", "transcripts");
+  const cachePath = path.join(transcriptsDir, `${hash}-scenes.json`);
+
+  try {
+    const cached = await fs.readFile(cachePath, "utf-8");
+    return JSON.parse(cached);
+  } catch {
+    // Cache miss
+  }
+
+  const scenes = await detectSceneChanges(sourcePath);
+
+  try {
+    await fs.mkdir(transcriptsDir, { recursive: true });
+    await fs.writeFile(cachePath, JSON.stringify(scenes));
+  } catch {
+    // Ignore write errors
+  }
+
+  return scenes;
+}
+
+async function getAudioAnalysis(
+  sourcePath: string,
+  startTime: number,
+  endTime: number
+): Promise<{ analysis: AudioAnalysis; emotion: EmotionScore } | null> {
+  const hash = hashSourcePath(sourcePath);
+  const transcriptsDir = path.join(process.cwd(), "outputs", "transcripts");
+  const cachePath = path.join(
+    transcriptsDir,
+    `${hash}-audio-${Math.round(startTime)}-${Math.round(endTime)}.json`
+  );
+
+  try {
+    const cached = await fs.readFile(cachePath, "utf-8");
+    return JSON.parse(cached);
+  } catch {
+    // Cache miss
+  }
+
+  try {
+    const analysis = await analyzeAudio(sourcePath, startTime, endTime);
+    const emotion = scoreEmotionalEnergy(analysis);
+    const result = { analysis, emotion };
+
+    try {
+      await fs.mkdir(transcriptsDir, { recursive: true });
+      await fs.writeFile(cachePath, JSON.stringify(result));
+    } catch {
+      // Ignore write errors
+    }
+
+    return result;
+  } catch {
+    return null;
+  }
+}
+
 export function normalizeClipOptions(
   options: Partial<ClipGenerationOptions>
 ): ClipGenerationOptions {
@@ -106,7 +212,9 @@ export function normalizeClipOptions(
 function buildClipCandidates(
   sourceDuration: number,
   options: ClipGenerationOptions,
-  words?: TranscriptWord[]
+  words?: TranscriptWord[],
+  sceneChanges?: number[],
+  fullAudio?: { analysis: AudioAnalysis; emotion: EmotionScore } | null
 ): ClipCandidate[] {
   const targetDuration = options.targetDuration || defaultTargetDuration;
   const windowDuration = clampNumber(
@@ -143,6 +251,8 @@ function buildClipCandidates(
         platform: options.platform,
         retentionScore: retentionPlan.scrollStopScore,
         words: clipWords,
+        sceneChanges,
+        audioEmotion: fullAudio?.emotion,
       });
 
       return {
@@ -188,12 +298,6 @@ function buildAnchors(sourceDuration: number, windowDuration: number) {
   );
 }
 
-const hookKeywords = [
-  "watch", "look", "did you", "guess what", "this is", "you won",
-  "tahu", "lihat", "coba", "gak nyangka", "ternyata", "ini dia",
-  "rahasia", "trik", "tips", "jangan", "pernah", "wajib",
-];
-
 function scoreCandidate({
   startTime,
   duration,
@@ -201,6 +305,8 @@ function scoreCandidate({
   platform,
   retentionScore,
   words,
+  sceneChanges,
+  audioEmotion,
 }: {
   startTime: number;
   duration: number;
@@ -208,6 +314,8 @@ function scoreCandidate({
   platform: ClipPlatformTarget;
   retentionScore: number;
   words?: TranscriptWord[];
+  sceneChanges?: number[];
+  audioEmotion?: EmotionScore;
 }) {
   const conciseScore = 1 - Math.min(1, Math.abs(duration - platformDefaultDuration(platform)) / 24);
   const earlyBias = startTime <= sourceDuration * 0.2 ? 1 : 0.55;
@@ -260,15 +368,15 @@ function scoreCandidate({
   if (silenceRatio > 0.4) transcriptBonus -= 20;
   else if (silenceRatio > 0.2) transcriptBonus -= 10;
 
-  // 4. Opening strength (0-25pts)
+  // 4. Opening strength + hook analysis (0-25pts)
   const firstWordStart = words[0].start - startTime;
-  if (firstWordStart <= 2) transcriptBonus += 15;
+  if (firstWordStart <= 2) transcriptBonus += 10;
   const firstSegmentText = words
-    .slice(0, 5)
-    .map((w) => w.word.toLowerCase())
+    .slice(0, 8)
+    .map((w) => w.word)
     .join(" ");
-  const hasHook = hookKeywords.some((kw) => firstSegmentText.includes(kw));
-  if (hasHook) transcriptBonus += 10;
+  const hookAnalysis = analyzeHookStrength(firstSegmentText);
+  transcriptBonus += Math.round((hookAnalysis.score / 100) * 15);
 
   // 5. Momentum (0-20pts)
   const midPoint = startTime + duration / 2;
@@ -280,6 +388,34 @@ function scoreCandidate({
   ).length;
   if (secondHalfWords > firstHalfWords) transcriptBonus += 20;
   else if (secondHalfWords === firstHalfWords) transcriptBonus += 10;
+
+  // Scene change alignment bonus (+15pts if clip starts on scene change)
+  if (sceneChanges && sceneChanges.length > 0) {
+    const hasSceneStart = sceneChanges.some(
+      (t) => Math.abs(t - startTime) < 1.0
+    );
+    if (hasSceneStart) transcriptBonus += 15;
+  }
+
+  // Audio emotional scoring
+  if (audioEmotion) {
+    // Loudness spikes in this clip window (+15)
+    const clipSpikes = audioEmotion.bestMoments.filter(
+      (m) => m.time >= startTime && m.time < startTime + duration
+    );
+    if (clipSpikes.length > 0) transcriptBonus += 15;
+
+    // Laughter pattern detected (+20)
+    if (audioEmotion.hasLaughterPattern) transcriptBonus += 20;
+
+    // High energy variance = dynamic audio (+10)
+    if (audioEmotion.energyVariance > 0.05) transcriptBonus += 10;
+
+    // Flat audio penalty (-10)
+    if (audioEmotion.energyVariance < 0.01 && audioEmotion.overallEnergy < 30) {
+      transcriptBonus -= 10;
+    }
+  }
 
   const finalScore = baseScore + transcriptBonus;
   return Math.round(clampNumber(finalScore, 0, 100));

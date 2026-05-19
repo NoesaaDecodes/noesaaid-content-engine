@@ -2,24 +2,26 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { mimo } from "@/app/lib/mimo";
 import { getToneVoiceStyle } from "@/app/lib/tones/tone-presets";
-import { getPowerWordsForPrompt } from "@/app/lib/patterns/pattern-matcher";
 
 export const runtime = "nodejs";
 
-const StudioGenerateSchema = z.object({
-  clipTitle: z.string().min(1).max(200),
+const CTAGenerateSchema = z.object({
+  transcript: z.string().max(500).optional(),
   platform: z.string().min(2).max(30),
-  duration: z.number().min(1).max(300).optional(),
   language: z.string().max(10).optional(),
   tone: z.string().max(30).optional(),
-  words: z
-    .array(
-      z.object({
-        word: z.string(),
-        start: z.number(),
-        end: z.number(),
-      })
-    )
+  ctaType: z
+    .enum([
+      "save",
+      "comment",
+      "follow",
+      "share",
+      "rage",
+      "curiosity",
+      "soft",
+      "aggressive",
+      "auto",
+    ])
     .optional(),
 });
 
@@ -35,7 +37,7 @@ export async function POST(request: Request) {
     );
   }
 
-  const parsed = StudioGenerateSchema.safeParse(body);
+  const parsed = CTAGenerateSchema.safeParse(body);
 
   if (!parsed.success) {
     return NextResponse.json(
@@ -48,16 +50,14 @@ export async function POST(request: Request) {
     );
   }
 
-  const { clipTitle, platform, duration, language, tone, words } = parsed.data;
+  const { transcript, platform, language, tone, ctaType } = parsed.data;
 
-  const transcript =
-    words && words.length > 0
-      ? words.map((w) => w.word).join(" ")
-      : "";
-
+  const lang = language && language !== "auto" ? language : "Indonesian";
   const voiceStyle = tone ? getToneVoiceStyle(tone) : "";
-  const langCode = language && language !== "auto" ? language : "id";
-  const powerWords = getPowerWordsForPrompt(langCode);
+  const typeInstruction =
+    ctaType && ctaType !== "auto"
+      ? `CTA type: ${ctaType}.`
+      : "Choose the best CTA type for this content.";
 
   try {
     const completion = await mimo.chat.completions.create({
@@ -66,26 +66,23 @@ export async function POST(request: Request) {
         {
           role: "system",
           content:
-            "You are a short-form video copywriter. Generate engaging social media copy for a video clip. Base your copy on the actual spoken content when a transcript is provided. Do NOT add brand names or unrelated context. Return ONLY valid JSON." +
+            "You are a social media engagement specialist. " +
+            "Generate short, punchy calls-to-action (CTA) for short-form video content. " +
+            "The CTA should match the content's tone and drive engagement. " +
+            "Return only a JSON object with a single 'cta' field." +
             (voiceStyle
               ? `\nWrite in this voice style: ${voiceStyle}`
               : ""),
         },
         {
           role: "user",
-          content: `Video clip: ${clipTitle}
+          content: `Content context: ${transcript ? transcript.slice(0, 200) : "Short-form video clip"}
 Platform: ${platform}
-${duration ? `Duration: ${duration}s` : ""}
-${language && language !== "auto" ? `Language: ${language}` : ""}
-${transcript ? `\nTranscript of spoken words:\n"${transcript}"` : ""}
-${powerWords ? `\nUse these high-impact words where natural: ${powerWords}` : ""}
+Language: ${lang}
+${typeInstruction}
 
-Return JSON:
-{
-  "hook": "string (max 80 chars, attention-grabbing)",
-  "caption": "string (max 300 chars, engaging)",
-  "hashtags": ["string", "string", "string", "string", "string"] (5-7 relevant tags without #)
-}`,
+Generate one CTA (max 15 words, in ${lang}):
+{ "cta": "string" }`,
         },
       ],
       temperature: 0.8,
@@ -106,24 +103,18 @@ Return JSON:
 
     return NextResponse.json({
       success: true,
-      result: {
-        hook: String(result.hook || "").slice(0, 120),
-        caption: String(result.caption || "").slice(0, 400),
-        hashtags: Array.isArray(result.hashtags)
-          ? result.hashtags.map((t: unknown) => String(t)).slice(0, 10)
-          : [],
-      },
+      cta: String(result.cta || "").slice(0, 100),
     });
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Unknown AI error";
 
-    console.error("Studio generate error:", error);
+    console.error("CTA generate error:", error);
 
     return NextResponse.json(
       {
         success: false,
-        error: "Failed to generate script",
+        error: "Failed to generate CTA",
         detail: message,
       },
       { status: 500 }

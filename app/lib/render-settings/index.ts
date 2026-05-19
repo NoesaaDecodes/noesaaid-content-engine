@@ -52,7 +52,7 @@ export const captionStyleIds = ["classic", "bold", "minimal", "neon"] as const;
 
 export type CaptionFontColor = "#FFE600" | "#FFFFFF" | "#00FFFF" | "#FF8C00" | "#FF69B4";
 export type CaptionFontSize = "small" | "medium" | "large";
-export type CaptionBackground = "dark" | "light" | "none";
+export type CaptionBackground = "dark" | "light" | "none" | "glow";
 export type CaptionPosition = "top" | "center" | "bottom";
 
 export type CaptionStyleParams = {

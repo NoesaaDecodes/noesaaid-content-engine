@@ -51,7 +51,7 @@ const StudioRenderSchema = z.object({
     .object({
       fontColor: z.enum(["#FFE600", "#FFFFFF", "#00FFFF", "#FF8C00", "#FF69B4"]),
       fontSize: z.enum(["small", "medium", "large"]),
-      background: z.enum(["dark", "light", "none"]),
+      background: z.enum(["dark", "light", "none", "glow"]),
       position: z.enum(["top", "center", "bottom"]),
       hookPosition: z.enum(["top", "center", "bottom"]).optional(),
     })
@@ -63,8 +63,9 @@ const StudioRenderSchema = z.object({
   musicPath: z.string().max(200).optional(),
   musicVolume: z.number().min(0).max(100).optional(),
   captionEffect: z
-    .enum(["fade", "pop", "slide-up", "karaoke", "bounce", "punch"])
+    .enum(["fade", "pop", "slide-up", "karaoke", "bounce", "punch", "shake"])
     .default("fade"),
+  blurBackground: z.boolean().optional(),
 });
 
 export async function POST(request: Request) {
@@ -157,6 +158,7 @@ export async function POST(request: Request) {
       musicPath: resolvedMusic,
       musicVolume: parsed.data.musicVolume,
       captionEffect,
+      blurBackground: parsed.data.blurBackground,
     });
 
     return NextResponse.json({

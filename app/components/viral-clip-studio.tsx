@@ -19,6 +19,7 @@ import {
   X,
 } from "lucide-react";
 import { defaultTemplateId } from "@/app/lib/templates";
+import { TONE_PRESETS } from "@/app/lib/tones/tone-presets";
 import { showToast } from "@/app/components/toast";
 
 const settingsKey = "noesaaid_settings";
@@ -154,6 +155,7 @@ export function ViralClipStudio({
   const [customWidth, setCustomWidth] = useState<number>(1080);
   const [customHeight, setCustomHeight] = useState<number>(1920);
   const [language, setLanguage] = useState<"auto" | "id" | "en">("auto");
+  const [tone, setTone] = useState("auto");
 
   const activeVideo =
     uploadedVideos.find((v) => v.sourcePath === activeSourcePath) || null;
@@ -282,6 +284,7 @@ export function ViralClipStudio({
           customWidth: platform === "custom" ? customWidth : undefined,
           customHeight: platform === "custom" ? customHeight : undefined,
           language,
+          tone: tone !== "auto" ? tone : undefined,
           settings: { quality: settings.quality },
         }),
       });
@@ -595,6 +598,38 @@ export function ViralClipStudio({
                     }`}
                   >
                     {l.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Tone Selector */}
+            <div className="flex items-center justify-center gap-2">
+              <span className="text-xs text-zinc-500">Tone</span>
+              <div className="flex gap-1 overflow-x-auto scrollbar-hide">
+                <button
+                  type="button"
+                  onClick={() => setTone("auto")}
+                  className={`shrink-0 rounded-md border px-2.5 py-1 text-xs transition ${
+                    tone === "auto"
+                      ? "border-cyan-400/50 bg-cyan-400/10 text-cyan-400"
+                      : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:border-zinc-700"
+                  }`}
+                >
+                  Auto
+                </button>
+                {TONE_PRESETS.map((t) => (
+                  <button
+                    key={t.id}
+                    type="button"
+                    onClick={() => setTone(t.id)}
+                    className={`shrink-0 rounded-md border px-2.5 py-1 text-xs transition ${
+                      tone === t.id
+                        ? "border-cyan-400/50 bg-cyan-400/10 text-cyan-400"
+                        : "border-zinc-800 bg-zinc-900 text-zinc-400 hover:border-zinc-700"
+                    }`}
+                  >
+                    {t.label}
                   </button>
                 ))}
               </div>

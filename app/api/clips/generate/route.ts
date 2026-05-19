@@ -11,6 +11,7 @@ import {
   type RenderSettings,
 } from "@/app/lib/render-settings";
 import { mimo } from "@/app/lib/mimo";
+import { getToneVoiceStyle } from "@/app/lib/tones/tone-presets";
 
 const execFileAsync = promisify(execFile);
 
@@ -26,6 +27,7 @@ const GenerateClipsSchema = z.object({
   customWidth: z.number().int().min(256).max(3840).optional(),
   customHeight: z.number().int().min(256).max(3840).optional(),
   language: z.enum(["auto", "id", "en"]).default("auto"),
+  tone: z.string().max(30).optional(),
   settings: z
     .object({
       quality: z.string().optional(),
@@ -116,7 +118,8 @@ export async function POST(request: Request) {
             input.data.customHeight,
             words,
             input.data.platform,
-            input.data.language
+            input.data.language,
+            input.data.tone
           )
         )
       );
@@ -154,7 +157,8 @@ async function renderCandidate(
   customHeight: number | undefined,
   words: Array<{ word: string; start: number; end: number }> | undefined,
   platform: string,
-  language: string
+  language: string,
+  tone?: string
 ): Promise<GeneratedClip> {
   try {
     const [output, aiScript] = await Promise.all([
@@ -166,7 +170,7 @@ async function renderCandidate(
         customHeight,
         words,
       }),
-      generateAIScript(candidate, words, platform, language),
+      generateAIScript(candidate, words, platform, language, tone),
     ]);
 
     const thumbPath = output.outputPath.replace(".mp4", "-thumb.jpg");
@@ -224,7 +228,8 @@ async function generateAIScript(
   candidate: ClipCandidate,
   words: Array<{ word: string; start: number; end: number }> | undefined,
   platform: string,
-  language: string
+  language: string,
+  tone?: string
 ): Promise<{ hook: string; caption: string; hashtags: string[] } | undefined> {
   try {
     const clipWords = (words || []).filter(
@@ -235,13 +240,18 @@ async function generateAIScript(
         ? clipWords.map((w) => w.word).join(" ")
         : candidate.suggestedCaption || candidate.title;
 
+    const voiceStyle = tone ? getToneVoiceStyle(tone) : "";
+
     const completion = await mimo.chat.completions.create({
       model: process.env.MIMO_MODEL || "mimo-v2.5-pro",
       messages: [
         {
           role: "system",
           content:
-            "You are a viral content copywriter. Generate engaging social media copy for a short video clip. Return ONLY valid JSON.",
+            "You are a viral content copywriter. Generate engaging social media copy for a short video clip. Return ONLY valid JSON." +
+            (voiceStyle
+              ? `\nWrite in this voice style: ${voiceStyle}`
+              : ""),
         },
         {
           role: "user",
