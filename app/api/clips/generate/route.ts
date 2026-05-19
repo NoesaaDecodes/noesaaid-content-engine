@@ -83,7 +83,8 @@ export async function POST(request: Request) {
     }
 
     const maxClips = Math.min(input.data.maxClips || 3, 5);
-    const settings = normalizeRenderSettings(input.data.settings || {});
+    // Force ultrafast quality for auto-generate mode (Order 14 FIX 3)
+    const settings = normalizeRenderSettings({ ...input.data.settings, quality: "draft" });
     const words = await transcribeSource(resolvedPath, input.data.language);
     const analysis = await analyzeSourceVideo(
       {
@@ -166,6 +167,7 @@ async function renderCandidate(
         sourcePath: resolvedPath,
         candidate,
         settings,
+        renderMode: "generate",
         customWidth,
         customHeight,
         words,

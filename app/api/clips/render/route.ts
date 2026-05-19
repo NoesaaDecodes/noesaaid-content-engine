@@ -109,6 +109,7 @@ export async function POST(request: Request) {
       sourcePath: resolvedPath,
       candidate: input.data.candidate,
       settings: normalizeRenderSettings(input.data.settings || {}),
+      renderMode: "quick-cut",
       customWidth: input.data.customWidth,
       customHeight: input.data.customHeight,
     });

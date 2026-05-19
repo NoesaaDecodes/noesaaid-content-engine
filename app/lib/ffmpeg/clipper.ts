@@ -21,10 +21,13 @@ const fps = 30;
 
 export type CaptionEffect = "fade" | "pop" | "slide-up" | "karaoke" | "bounce" | "punch" | "shake";
 
+export type RenderMode = "generate" | "quick-cut" | "studio";
+
 type ClipRenderInput = {
   sourcePath: string;
   candidate: ClipCandidate;
   settings: RenderSettings;
+  renderMode?: RenderMode;
   customWidth?: number;
   customHeight?: number;
   words?: Array<{ word: string; start: number; end: number }>;
@@ -36,7 +39,6 @@ type ClipRenderInput = {
   musicVolume?: number;
   captionEffect?: CaptionEffect;
   smartCrop?: boolean;
-  energyProfile?: number[];
   blurBackground?: boolean;
 };
 
@@ -44,6 +46,7 @@ export async function renderClip({
   sourcePath,
   candidate,
   settings,
+  renderMode,
   customWidth,
   customHeight,
   words,
@@ -55,7 +58,6 @@ export async function renderClip({
   musicVolume,
   captionEffect,
   smartCrop,
-  energyProfile,
   blurBackground,
 }: ClipRenderInput) {
   await ensureRenderDirectories();
@@ -77,12 +79,14 @@ export async function renderClip({
   const hasAudio = await probeHasAudio(sourcePath);
 
   const t0 = Date.now();
+  console.log("[RENDER START] mode:", renderMode || "default", "quality:", settings.quality);
   await runClipRender({
     sourcePath,
     outputPath,
     startTime: candidate.startTime,
     duration,
     settings,
+    renderMode,
     dims,
     isVerticalSource,
     hasAudio,
@@ -95,11 +99,10 @@ export async function renderClip({
     musicVolume,
     captionEffect,
     smartCrop,
-    energyProfile,
     blurBackground,
   });
 
-  console.log("[RENDER TIME]", Date.now() - t0, "ms");
+  console.log("[RENDER DONE]", Date.now() - t0, "ms", outputPath);
 
   return {
     filename,
@@ -267,9 +270,10 @@ async function detectMotionCenter(
 ): Promise<MotionPoint | null> {
   const ffmpegPath = process.env.FFMPEG_PATH || "ffmpeg";
 
-  // Sample frames at different points and analyze brightness/contrast distribution
-  // We sample a few frames and analyze brightness variation to find motion region
-  const samplePoints = [0.2, 0.5, 0.8].map((p) => Math.max(0, startTime + duration * p));
+  // Order 15 FIX 5: Sample 5 frames with weighted average
+  const sampleFractions = [0.1, 0.25, 0.5, 0.75, 0.9];
+  const weights = [0.1, 0.2, 0.4, 0.2, 0.1];
+  const samplePoints = sampleFractions.map((p) => Math.max(0, startTime + duration * p));
 
   const results: MotionPoint[] = [];
 
@@ -284,11 +288,37 @@ async function detectMotionCenter(
     return null;
   }
 
-  // Average the motion centers
-  const avgX = Math.round(results.reduce((s, r) => s + r.x, 0) / results.length);
-  const avgY = Math.round(results.reduce((s, r) => s + r.y, 0) / results.length);
+  // Smooth jitter: if consecutive X values differ > 20%, use median instead of average
+  const xs = results.map((r) => r.x);
+  const hasJitter = xs.some((x, i) => i > 0 && Math.abs(x - xs[i - 1]) > sourceW * 0.2);
 
-  return { x: avgX, y: avgY };
+  let finalX: number;
+  let finalY: number;
+
+  if (hasJitter && results.length >= 3) {
+    // Use median for stability
+    const sortedX = [...xs].sort((a, b) => a - b);
+    const sortedY = results.map((r) => r.y).sort((a, b) => a - b);
+    finalX = sortedX[Math.floor(sortedX.length / 2)];
+    finalY = sortedY[Math.floor(sortedY.length / 2)];
+    console.log(`[FACE CROP] jitter detected, using median: (${finalX}, ${finalY})`);
+  } else {
+    // Weighted average
+    const usedWeights = weights.slice(0, results.length);
+    const totalWeight = usedWeights.reduce((s, w) => s + w, 0);
+    finalX = Math.round(results.reduce((s, r, i) => s + r.x * usedWeights[i], 0) / totalWeight);
+    finalY = Math.round(results.reduce((s, r, i) => s + r.y * usedWeights[i], 0) / totalWeight);
+  }
+
+  // Upper-third bias: faces are usually in upper 60% of frame
+  if (finalY > sourceH * 0.6) {
+    finalY = Math.round(finalY * 0.7);
+    console.log(`[FACE CROP] upper-third bias applied, Y adjusted to ${finalY}`);
+  }
+
+  console.log(`[FACE CROP] frames sampled: ${results.length}, weighted center: (${finalX}, ${finalY})`);
+
+  return { x: finalX, y: finalY };
 }
 
 async function analyzeFrameMotion(
@@ -377,6 +407,7 @@ async function runClipRender({
   startTime,
   duration,
   settings,
+  renderMode,
   dims,
   isVerticalSource,
   hasAudio,
@@ -389,7 +420,6 @@ async function runClipRender({
   musicVolume,
   captionEffect,
   smartCrop,
-  energyProfile,
   blurBackground,
 }: {
   sourcePath: string;
@@ -397,6 +427,7 @@ async function runClipRender({
   startTime: number;
   duration: number;
   settings: RenderSettings;
+  renderMode?: RenderMode;
   dims: { w: number; h: number };
   isVerticalSource: boolean;
   hasAudio: boolean;
@@ -409,17 +440,17 @@ async function runClipRender({
   musicVolume?: number;
   captionEffect?: CaptionEffect;
   smartCrop?: boolean;
-  energyProfile?: number[];
   blurBackground?: boolean;
 }) {
   const quality = qualityOptions[settings.quality];
   const isDraft = settings.quality === "draft";
+  const isGenerate = renderMode === "generate" || renderMode === "quick-cut";
   const w = isDraft ? Math.min(dims.w, 720) : dims.w;
   const h = isDraft ? Math.min(dims.h, 1280) : dims.h;
 
   let scalePad = `scale=${w}:${h}:force_original_aspect_ratio=decrease,pad=${w}:${h}:(ow-iw)/2:(oh-ih)/2:black,setsar=1,fps=${fps}`;
 
-  if (smartCrop && !isDraft) {
+  if (smartCrop && !isDraft && !isGenerate) {
     const faceCrop = await detectFaceCrop(sourcePath, startTime, duration, w, h);
     if (faceCrop) {
       const xOffset = clampNumber(faceCrop.faceX - Math.round(w / 2), 0, Math.max(0, faceCrop.w - w));
@@ -431,22 +462,23 @@ async function runClipRender({
     }
   }
 
-  const useBlurBg = blurBackground && !isDraft && !isVerticalSource && h > w;
-  const applyZoompan = !isDraft && isVerticalSource && duration <= 10;
-  const beatZoomExpr = buildBeatZoomExpr(energyProfile, duration);
+  const useBlurBg = blurBackground && !isDraft && !isGenerate && !isVerticalSource && h > w;
+  // Only apply zoompan for short vertical clips in studio mode
+  const applyZoompan = !isDraft && !isGenerate && isVerticalSource && duration <= 8 && !useBlurBg;
 
   let baseVideo: string;
   const extraFilters: string[] = [];
 
   if (useBlurBg) {
-    // Blurred background for landscape→vertical
+    // Blurred background for landscape→vertical (expensive, only when explicitly enabled)
     const bgBlur = `[0:v]scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},boxblur=20:10[bgblur]`;
     const fgScale = `[0:v]scale=${w}:${h}:force_original_aspect_ratio=decrease[fg]`;
     const overlay = `[bgblur][fg]overlay=(W-w)/2:(H-h)/2:shortest=1,setsar=1,fps=${fps}[vblurred]`;
     extraFilters.push(bgBlur, fgScale, overlay);
     baseVideo = `[vblurred]format=yuv420p[vbase]`;
   } else if (applyZoompan) {
-    baseVideo = `[0:v]${scalePad},zoompan=z='${beatZoomExpr}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${w}x${h}:fps=${fps},crop=iw:ih:0:0,format=yuv420p[vbase]`;
+    // Simple slow zoom — single expression, no nested ifs
+    baseVideo = `[0:v]${scalePad},zoompan=z='min(zoom+0.0008,1.06)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=${w}x${h}:fps=${fps},format=yuv420p[vbase]`;
   } else {
     baseVideo = `[0:v]${scalePad},format=yuv420p[vbase]`;
   }
@@ -456,7 +488,7 @@ async function runClipRender({
   const captionSize = Math.max(40, Math.min(64, Math.round(h * 0.036)));
 
   const useStatic = !!(staticHook || staticCaption);
-  const effect = captionEffect || "fade";
+  const effect = (isDraft || isGenerate) ? "fade" : (captionEffect || "fade");
   const { filters: textFilters, lastLabel } = useStatic
     ? buildStaticCaptionFilters(
         staticHook || "",
@@ -494,17 +526,20 @@ async function runClipRender({
     );
   }
 
+  // Gradient: single layer for generate mode, 3 layers for studio
   const gradientFilters = isDraft
     ? [`[vbase]format=yuv420p[vready]`]
-    : [
-        `[vbase]drawbox=x=0:y=ih*0.45:w=iw:h=ih*0.08:color=black@0.03:t=fill[vg1]`,
-        `[vg1]drawbox=x=0:y=ih*0.53:w=iw:h=ih*0.08:color=black@0.06:t=fill[vg2]`,
-        `[vg2]drawbox=x=0:y=ih*0.61:w=iw:h=ih*0.08:color=black@0.10:t=fill[vg3]`,
-        `[vg3]drawbox=x=0:y=ih*0.69:w=iw:h=ih*0.08:color=black@0.15:t=fill[vg4]`,
-        `[vg4]drawbox=x=0:y=ih*0.77:w=iw:h=ih*0.08:color=black@0.22:t=fill[vg5]`,
-        `[vg5]drawbox=x=0:y=ih*0.85:w=iw:h=ih*0.15:color=black@0.30:t=fill[vgrad]`,
-        `[vgrad]format=yuv420p[vready]`,
-      ];
+    : isGenerate
+      ? [
+          `[vbase]drawbox=x=0:y=ih*0.55:w=iw:h=ih*0.45:color=black@0.45:t=fill[vgrad]`,
+          `[vgrad]format=yuv420p[vready]`,
+        ]
+      : [
+          `[vbase]drawbox=x=0:y=ih*0.50:w=iw:h=ih*0.12:color=black@0.08:t=fill[vg1]`,
+          `[vg1]drawbox=x=0:y=ih*0.62:w=iw:h=ih*0.15:color=black@0.18:t=fill[vg2]`,
+          `[vg2]drawbox=x=0:y=ih*0.77:w=iw:h=ih*0.23:color=black@0.30:t=fill[vgrad]`,
+          `[vgrad]format=yuv420p[vready]`,
+        ];
 
   const filters = [
     ...extraFilters,
@@ -522,6 +557,7 @@ async function runClipRender({
 
   const audioMap = musicPath ? ["-map", "[aout]"] : ["-map", "0:a?"];
 
+  console.log("[FILTERS]", filters.length, "total | textFilters:", textFilters.length, "extra:", extraFilters.length, "gradient:", gradientFilters.length, "audio:", audioFilters.length);
   console.log("[MUSIC] musicPath:", musicPath, "musicVolume:", musicVolume, "hasAudio:", hasAudio, "vol:", vol, "audioFilters:", audioFilters.length, "audioMap:", audioMap);
 
   await new Promise<void>((resolve, reject) => {
@@ -684,7 +720,7 @@ function buildWordCaptionFilters(
   }
   phrases.push(current);
 
-  const maxPhrases = 30;
+  const maxPhrases = 15;
   const capped = phrases.slice(0, maxPhrases);
 
   const filters: string[] = [];
@@ -735,55 +771,20 @@ function buildWordCaptionFilters(
     const yExpr = buildYExpr(effect, yPos, p.start);
     const fontsizeExpr = buildFontsizeExpr(effect, fontSize, p.start);
 
-    // Glow layers: outer glow (borderw=8) + mid glow (borderw=4) + sharp
+    // Glow: 1 blur layer + 1 sharp layer (max 2 total)
     const isGlow = useGranular && granular.background === "glow";
     if (isGlow) {
-      const glowOuterLabel = `vglow1_${i}`;
-      const glowMidLabel = `vglow2_${i}`;
+      const glowLabel = `vglow_${i}`;
       filters.push(
-        `[${prevLabel}]drawtext=${fontFile}text='${escaped}':fontsize=${fontsizeExpr}:fontcolor=${fontColor}:alpha=${alphaExpr}:borderw=8:bordercolor=${fontColor}@0.3:x='max(80,(w-text_w)/2)':y=${yExpr}:enable='between(t,${s},${e})'[${glowOuterLabel}]`
+        `[${prevLabel}]drawtext=${fontFile}text='${escaped}':fontsize=${fontsizeExpr}:fontcolor=${fontColor}:alpha=${alphaExpr}:borderw=6:bordercolor=${fontColor}@0.4:x='max(80,(w-text_w)/2)':y=${yExpr}:enable='between(t,${s},${e})'[${glowLabel}]`
       );
-      filters.push(
-        `[${glowOuterLabel}]drawtext=${fontFile}text='${escaped}':fontsize=${fontsizeExpr}:fontcolor=${fontColor}:alpha=${alphaExpr}:borderw=4:bordercolor=${fontColor}@0.5:x='max(80,(w-text_w)/2)':y=${yExpr}:enable='between(t,${s},${e})'[${glowMidLabel}]`
-      );
-      prevLabel = glowMidLabel;
+      prevLabel = glowLabel;
     }
 
     filters.push(
       `[${prevLabel}]drawtext=${fontFile}text='${escaped}':fontsize=${fontsizeExpr}:fontcolor=${fontColor}:alpha=${alphaExpr}${shadow}${border}:x='max(80,(w-text_w)/2)':y=${yExpr}:enable='between(t,${s},${e})'[${nextLabel}]`
     );
-
-    // Punch word highlight: overlay last word with highlight color + glow
-    const phraseWords = p.text.split(/\s+/).filter(Boolean);
-    if (phraseWords.length > 0) {
-      const lastWord = phraseWords[phraseWords.length - 1];
-      const lastWordEscaped = escapeDrawtextText(lastWord);
-
-      if (lastWordEscaped) {
-        const baseUpper = fontColor.toUpperCase();
-        let highlightColor = "#FFE600";
-        if (baseUpper === "#FFFFFF") highlightColor = "#FFE600";
-        else if (baseUpper === "#FFE600" || baseUpper === "#00FFFF") highlightColor = "#FFFFFF";
-
-        const highlightSize = Math.round(fontSize * 1.1);
-        const prefixText = phraseWords.slice(0, -1).join(" ");
-        const avgCharWidth = fontSize * 0.55;
-        const totalCharsWidth = Math.round(p.text.length * avgCharWidth);
-        const prefixWidth = Math.round(prefixText.length * avgCharWidth);
-
-        const hlLabel = `vhl${i}`;
-        const hlFontsizeExpr = buildFontsizeExpr(effect, highlightSize, p.start);
-
-        filters.push(
-          `[${nextLabel}]drawtext=${fontFile}text='${lastWordEscaped}':fontsize=${hlFontsizeExpr}:fontcolor=${highlightColor}:alpha=${alphaExpr}${shadow}:borderw=2:bordercolor=${highlightColor}:x='max(80,(w-${totalCharsWidth})/2+${prefixWidth})':y=${yExpr}:enable='between(t,${s},${e})'[${hlLabel}]`
-        );
-        prevLabel = hlLabel;
-      } else {
-        prevLabel = nextLabel;
-      }
-    } else {
-      prevLabel = nextLabel;
-    }
+    prevLabel = nextLabel;
   }
 
   return { filters, lastLabel: prevLabel };
@@ -864,15 +865,11 @@ function buildStaticCaptionFilters(
     const hookFontsizeExpr = buildFontsizeExpr(effect, hookFontSize, 0);
 
     if (isGlow) {
-      const glowOuterLabel = "vhook_glow1";
-      const glowMidLabel = "vhook_glow2";
+      const glowLabel = "vhook_glow";
       filters.push(
-        `[${prevLabel}]drawtext=${fontFile}text='${escaped}':fontsize=${hookFontsizeExpr}:fontcolor=${fontColor}:alpha=${alphaExpr}:borderw=8:bordercolor=${fontColor}@0.3:x='max(60,(w-text_w)/2)':y=${hookYExpr}:enable='between(t,0,${hEnd})'[${glowOuterLabel}]`
+        `[${prevLabel}]drawtext=${fontFile}text='${escaped}':fontsize=${hookFontsizeExpr}:fontcolor=${fontColor}:alpha=${alphaExpr}:borderw=6:bordercolor=${fontColor}@0.4:x='max(60,(w-text_w)/2)':y=${hookYExpr}:enable='between(t,0,${hEnd})'[${glowLabel}]`
       );
-      filters.push(
-        `[${glowOuterLabel}]drawtext=${fontFile}text='${escaped}':fontsize=${hookFontsizeExpr}:fontcolor=${fontColor}:alpha=${alphaExpr}:borderw=4:bordercolor=${fontColor}@0.5:x='max(60,(w-text_w)/2)':y=${hookYExpr}:enable='between(t,0,${hEnd})'[${glowMidLabel}]`
-      );
-      prevLabel = glowMidLabel;
+      prevLabel = glowLabel;
     }
 
     filters.push(
@@ -903,15 +900,11 @@ function buildStaticCaptionFilters(
         const fontsizeExpr = buildFontsizeExpr(effect, fontSize, lineStart);
 
         if (isGlow) {
-          const glowOuterLabel = `vcap_glow1_${i}`;
-          const glowMidLabel = `vcap_glow2_${i}`;
+          const glowLabel = `vcap_glow_${i}`;
           filters.push(
-            `[${prevLabel}]drawtext=${fontFile}text='${escaped}':fontsize=${fontsizeExpr}:fontcolor=${fontColor}:alpha=${alphaExpr}:borderw=8:bordercolor=${fontColor}@0.3:x='max(60,(w-text_w)/2)':y=${yExpr}:enable='between(t,${lineStart.toFixed(3)},${lineEnd.toFixed(3)})'[${glowOuterLabel}]`
+            `[${prevLabel}]drawtext=${fontFile}text='${escaped}':fontsize=${fontsizeExpr}:fontcolor=${fontColor}:alpha=${alphaExpr}:borderw=6:bordercolor=${fontColor}@0.4:x='max(60,(w-text_w)/2)':y=${yExpr}:enable='between(t,${lineStart.toFixed(3)},${lineEnd.toFixed(3)})'[${glowLabel}]`
           );
-          filters.push(
-            `[${glowOuterLabel}]drawtext=${fontFile}text='${escaped}':fontsize=${fontsizeExpr}:fontcolor=${fontColor}:alpha=${alphaExpr}:borderw=4:bordercolor=${fontColor}@0.5:x='max(60,(w-text_w)/2)':y=${yExpr}:enable='between(t,${lineStart.toFixed(3)},${lineEnd.toFixed(3)})'[${glowMidLabel}]`
-          );
-          prevLabel = glowMidLabel;
+          prevLabel = glowLabel;
         }
 
         filters.push(
@@ -923,55 +916,6 @@ function buildStaticCaptionFilters(
   }
 
   return { filters, lastLabel: prevLabel };
-}
-
-function buildBeatZoomExpr(
-  energyProfile?: number[],
-  clipDuration?: number
-): string {
-  // Always include opening punch at t=0.5
-  const openingPunch = buildPunchZoomAt(0.5);
-
-  if (!energyProfile || energyProfile.length === 0 || !clipDuration) {
-    return `min(${openingPunch}+zoom*0.0008,1.08)`;
-  }
-
-  // Find peak energy moments (top 20% or above 0.7)
-  const mean = energyProfile.reduce((s, v) => s + v, 0) / energyProfile.length;
-  const threshold = Math.max(0.7, mean + 0.15);
-  const peaks: number[] = [];
-
-  for (let i = 0; i < energyProfile.length; i++) {
-    if (energyProfile[i] >= threshold) {
-      peaks.push(i);
-    }
-  }
-
-  if (peaks.length === 0) {
-    return `min(${openingPunch}+zoom*0.0008,1.08)`;
-  }
-
-  // Build nested if expression for beat-sync zoom + opening punch
-  let expr = `${openingPunch}+zoom*0.0003`;
-
-  for (let i = peaks.length - 1; i >= 0; i--) {
-    const t = peaks[i].toFixed(1);
-    const tMid = (peaks[i] + 0.15).toFixed(1);
-    const tEnd = (peaks[i] + 0.30).toFixed(1);
-    const riseExpr = `1+0.05*(t-${t})/0.15`;
-    const fallExpr = `1.05-0.05*(t-${tMid})/0.15`;
-    const punchExpr = `if(between(t\\,${t}\\,${tMid})\\,${riseExpr}\\,if(between(t\\,${tMid}\\,${tEnd})\\,${fallExpr}\\,1))`;
-    expr = `if(between(t\\,${t}\\,${tEnd})\\,${punchExpr}*${expr}\\,${expr})`;
-  }
-
-  return `min(${expr},1.08)`;
-}
-
-function buildPunchZoomAt(timestamp: number): string {
-  const t = timestamp.toFixed(2);
-  const tMid = (timestamp + 0.15).toFixed(2);
-  const tEnd = (timestamp + 0.30).toFixed(2);
-  return `if(between(t\\,${t}\\,${tMid})\\,1+0.1*(t-${t})/0.15\\,if(between(t\\,${tMid}\\,${tEnd})\\,1.1-0.1*(t-${tMid})/0.15\\,1))`;
 }
 
 function toFFmpegPath(p: string): string {

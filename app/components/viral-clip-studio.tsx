@@ -150,7 +150,12 @@ export function ViralClipStudio({
   const [elapsed, setElapsed] = useState(0);
   const [copiedClipKey, setCopiedClipKey] = useState("");
   const [expandedCaption, setExpandedCaption] = useState<number | null>(null);
-  const [settings] = useState<AppSettings>(readSettings);
+  const [settings, setSettings] = useState<AppSettings>({ quality: "standard", maxClips: 3, targetDuration: 30 });
+
+  useEffect(() => {
+    const stored = readSettings();
+    setSettings(stored);
+  }, []);
   const [platform, setPlatform] = useState<string>("reels");
   const [customWidth, setCustomWidth] = useState<number>(1080);
   const [customHeight, setCustomHeight] = useState<number>(1920);

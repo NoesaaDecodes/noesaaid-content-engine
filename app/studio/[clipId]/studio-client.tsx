@@ -29,7 +29,10 @@ import { CTA_TYPES } from "@/app/lib/cta/cta-engine";
 import { VISUAL_PRESETS, type VisualPreset } from "@/app/lib/presets/visual-presets";
 import EmojiPicker from "@/app/components/emoji-picker";
 import MusicPicker from "@/app/components/music-picker";
+import BrandPresetManager from "@/app/components/brand-preset-manager";
+import TimelineEditor from "@/app/components/timeline-editor";
 import { showToast } from "@/app/components/toast";
+import type { BrandPreset } from "@/app/lib/brand/brand-presets";
 
 type ClipData = {
   filename: string | null;
@@ -152,6 +155,23 @@ export default function StudioClient() {
   >([]);
   const [selectedPreset, setSelectedPreset] = useState<string>("custom");
   const [blurBackground, setBlurBackground] = useState(false);
+
+  // Order 15: Curiosity, B-Roll, Timeline
+  const [curiosityHooks, setCuriosityHooks] = useState<{
+    openLoop: string;
+    delayedPayoff: string;
+    mysteryPhrase: string;
+    tensionLine: string;
+  } | null>(null);
+  const [isGeneratingCuriosity, setIsGeneratingCuriosity] = useState(false);
+  const [brollSuggestions, setBrollSuggestions] = useState<
+    Array<{ timestamp: number; keyword: string; suggestion: string; searchQuery: string; type: string }>
+  >([]);
+  const [showBRoll, setShowBRoll] = useState(false);
+  const [showTimeline, setShowTimeline] = useState(false);
+  const [timelineCaptions, setTimelineCaptions] = useState<
+    Array<{ start: number; end: number; text: string }>
+  >([]);
 
   const hookRef = useRef<HTMLInputElement>(null);
   const captionRef = useRef<HTMLTextAreaElement>(null);
@@ -291,6 +311,75 @@ export default function StudioClient() {
     } finally {
       setIsGeneratingCTA(false);
     }
+  }
+
+  async function generateCuriosity() {
+    if (!clip) return;
+    setIsGeneratingCuriosity(true);
+    try {
+      const transcript = clip.words
+        ? clip.words.map((w) => w.word).join(" ")
+        : hook || caption || clip.title;
+      const response = await fetch("/api/curiosity/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ transcript: transcript.slice(0, 500), language: "auto", tone: selectedTone !== "auto" ? selectedTone : undefined }),
+      });
+      const data = await response.json() as {
+        success: boolean;
+        openLoop?: string;
+        delayedPayoff?: string;
+        mysteryPhrase?: string;
+        tensionLine?: string;
+      };
+      if (data.success) {
+        setCuriosityHooks({
+          openLoop: data.openLoop || "",
+          delayedPayoff: data.delayedPayoff || "",
+          mysteryPhrase: data.mysteryPhrase || "",
+          tensionLine: data.tensionLine || "",
+        });
+      }
+    } catch {
+      showToast("Curiosity generation failed", "error");
+    } finally {
+      setIsGeneratingCuriosity(false);
+    }
+  }
+
+  async function fetchBRollSuggestions() {
+    if (!clip?.words || clip.words.length === 0) return;
+    try {
+      const segments = clip.words.map((w) => ({ text: w.word, start: w.start, end: w.end }));
+      const response = await fetch("/api/broll/suggest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ transcript: clip.words.map((w) => w.word).join(" "), segments }),
+      });
+      const data = await response.json() as {
+        success: boolean;
+        suggestions?: Array<{ timestamp: number; keyword: string; suggestion: string; searchQuery: string; type: string }>;
+      };
+      if (data.success && data.suggestions) {
+        setBrollSuggestions(data.suggestions);
+      }
+    } catch {
+      showToast("B-Roll fetch failed", "error");
+    }
+  }
+
+  function handleBrandPresetLoad(preset: BrandPreset) {
+    setStyleParams({
+      fontColor: preset.fontColor as typeof styleParams.fontColor,
+      fontSize: preset.fontSize,
+      background: preset.background as typeof styleParams.background,
+      position: preset.captionPosition as typeof styleParams.position,
+      hookPosition: preset.hookPosition as typeof styleParams.position,
+    });
+    setCaptionEffect(preset.captionEffect);
+    setSelectedTone(preset.defaultTone);
+    setBlurBackground(preset.blurBackground);
+    showToast(`Loaded "${preset.name}"`, "success");
   }
 
   function containsEmoji(text: string): boolean {
@@ -635,6 +724,92 @@ function insertAtCursor(
                 </Link>
               </motion.div>
             ) : null}
+
+            {/* B-Roll Ideas */}
+            <div className="mt-4">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowBRoll(!showBRoll);
+                  if (!showBRoll && brollSuggestions.length === 0) void fetchBRollSuggestions();
+                }}
+                className="flex h-7 items-center gap-1.5 rounded-md border border-zinc-800 px-2.5 text-[10px] text-zinc-400 hover:border-cyan-400/30 hover:text-cyan-400"
+              >
+                <Lightbulb className="size-3" />
+                B-Roll Ideas
+                {brollSuggestions.length > 0 && (
+                  <span className="ml-1 rounded bg-zinc-800 px-1 text-[9px]">{brollSuggestions.length}</span>
+                )}
+              </button>
+              {showBRoll && brollSuggestions.length > 0 && (
+                <div className="mt-2 space-y-1.5">
+                  {brollSuggestions.slice(0, 6).map((s, i) => (
+                    <div
+                      key={i}
+                      className="flex items-center justify-between rounded-md border border-zinc-800 bg-zinc-900/50 px-2.5 py-1.5"
+                    >
+                      <div className="flex-1">
+                        <span className="text-[10px] text-zinc-500">{Math.round(s.timestamp)}s</span>
+                        <span className="ml-2 text-[11px] text-zinc-300">{s.suggestion}</span>
+                      </div>
+                      <a
+                        href={`https://www.pexels.com/search/${encodeURIComponent(s.searchQuery)}`}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="shrink-0 text-[10px] text-cyan-400 hover:underline"
+                      >
+                        Search
+                      </a>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Timeline Editor */}
+            {clip.words && clip.words.length > 0 && (
+              <div className="mt-4">
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!showTimeline && timelineCaptions.length === 0) {
+                      const segs: Array<{ start: number; end: number; text: string }> = [];
+                      let current = { start: 0, end: 0, text: "" };
+                      for (const w of clip.words!) {
+                        if (current.text === "") {
+                          current = { start: w.start, end: w.end, text: w.word };
+                        } else if (w.start - current.end < 0.5) {
+                          current.end = w.end;
+                          current.text += " " + w.word;
+                        } else {
+                          segs.push(current);
+                          current = { start: w.start, end: w.end, text: w.word };
+                        }
+                        if (current.text.split(" ").length >= 6) {
+                          segs.push(current);
+                          current = { start: 0, end: 0, text: "" };
+                        }
+                      }
+                      if (current.text) segs.push(current);
+                      setTimelineCaptions(segs);
+                    }
+                    setShowTimeline(!showTimeline);
+                  }}
+                  className="flex h-7 items-center gap-1.5 rounded-md border border-zinc-800 px-2.5 text-[10px] text-zinc-400 hover:border-cyan-400/30 hover:text-cyan-400"
+                >
+                  Edit Caption Timing
+                </button>
+                {showTimeline && timelineCaptions.length > 0 && (
+                  <div className="mt-3">
+                    <TimelineEditor
+                      duration={clip.endTime - clip.startTime}
+                      captions={timelineCaptions}
+                      onCaptionsChange={setTimelineCaptions}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
           </motion.div>
 
           {/* Right Panel — Script Editor */}
@@ -874,6 +1049,38 @@ function insertAtCursor(
                   ))}
                 </div>
               ) : null}
+
+              {/* Curiosity Boost */}
+              <div className="mt-2">
+                <button
+                  type="button"
+                  disabled={isGeneratingCuriosity}
+                  onClick={() => void generateCuriosity()}
+                  className="flex h-7 items-center gap-1.5 rounded-md border border-amber-400/30 bg-amber-400/5 px-2.5 text-[10px] font-medium text-amber-400 transition hover:bg-amber-400/10 disabled:opacity-40"
+                >
+                  {isGeneratingCuriosity ? (
+                    <Loader2 className="size-3 animate-spin" />
+                  ) : (
+                    <Sparkles className="size-3" />
+                  )}
+                  Curiosity Boost
+                </button>
+                {curiosityHooks && (
+                  <div className="mt-2 space-y-1">
+                    {Object.entries(curiosityHooks).map(([key, text]) => (
+                      <button
+                        key={key}
+                        type="button"
+                        onClick={() => setHook(text)}
+                        className="flex w-full items-center gap-2 rounded-md border border-zinc-800 bg-zinc-900/50 px-2.5 py-1.5 text-left text-[11px] text-zinc-300 transition hover:border-amber-400/30 hover:bg-zinc-900"
+                      >
+                        <span className="shrink-0 text-[9px] uppercase text-amber-400/60">{key.replace(/([A-Z])/g, " $1").trim()}</span>
+                        <span className="flex-1 truncate">{text}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
 
             {/* Caption */}
@@ -1259,6 +1466,24 @@ function insertAtCursor(
                 />
               </motion.div>
             ) : null}
+
+            {/* Brand Presets */}
+            <div className="rounded-lg border border-zinc-800 bg-zinc-950 p-3">
+              <BrandPresetManager
+                currentSettings={{
+                  fontColor: styleParams.fontColor,
+                  fontSize: styleParams.fontSize,
+                  background: styleParams.background,
+                  captionEffect,
+                  hookPosition: styleParams.hookPosition || "bottom",
+                  captionPosition: styleParams.position,
+                  blurBackground,
+                }}
+                currentTone={selectedTone}
+                currentLanguage="auto"
+                onLoad={handleBrandPresetLoad}
+              />
+            </div>
 
             {/* Error */}
             {error ? (

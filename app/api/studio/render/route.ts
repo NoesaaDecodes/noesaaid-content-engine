@@ -149,6 +149,7 @@ export async function POST(request: Request) {
       sourcePath: resolvedPath,
       candidate,
       settings: normalizeRenderSettings({}),
+      renderMode: "studio",
       customWidth,
       customHeight,
       captionStyle,
