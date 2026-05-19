@@ -66,6 +66,9 @@ const StudioRenderSchema = z.object({
     .enum(["fade", "pop", "slide-up", "karaoke", "bounce", "punch", "shake"])
     .default("fade"),
   blurBackground: z.boolean().optional(),
+  words: z
+    .array(z.object({ word: z.string(), start: z.number(), end: z.number() }))
+    .optional(),
 });
 
 export async function POST(request: Request) {
@@ -152,6 +155,7 @@ export async function POST(request: Request) {
       renderMode: "studio",
       customWidth,
       customHeight,
+      words: parsed.data.words,
       captionStyle,
       captionStyleParams: captionStyleParams as CaptionStyleParams | undefined,
       staticHook: hook ? stripEmoji(hook) : undefined,

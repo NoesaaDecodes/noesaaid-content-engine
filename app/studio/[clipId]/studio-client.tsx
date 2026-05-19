@@ -155,6 +155,8 @@ export default function StudioClient() {
   >([]);
   const [selectedPreset, setSelectedPreset] = useState<string>("custom");
   const [blurBackground, setBlurBackground] = useState(false);
+  const [transcriptWords, setTranscriptWords] = useState<Array<{ word: string; start: number; end: number }>>([]);
+  const [transcriptStatus, setTranscriptStatus] = useState<"idle" | "loading" | "ready" | "failed">("idle");
 
   // Order 15: Curiosity, B-Roll, Timeline
   const [curiosityHooks, setCuriosityHooks] = useState<{
@@ -205,9 +207,44 @@ export default function StudioClient() {
     }
   }, []);
 
+  // Load transcript on-demand when Studio opens
   useEffect(() => {
-    if (!clip?.words || clip.words.length === 0) return;
-    const transcript = clip.words.map((w) => w.word).join(" ");
+    if (!clip || !sourcePath) return;
+
+    // If clip already has words from generate, use them
+    if (clip.words && clip.words.length > 0) {
+      setTranscriptWords(clip.words);
+      setTranscriptStatus("ready");
+      return;
+    }
+
+    const duration = clip.endTime - clip.startTime;
+    setTranscriptStatus("loading");
+
+    const params = new URLSearchParams({
+      sourcePath,
+      startTime: String(clip.startTime),
+      duration: String(duration),
+    });
+
+    fetch(`/api/studio/transcript?${params}`)
+      .then((r) => r.json())
+      .then((data: { success: boolean; words?: Array<{ word: string; start: number; end: number }> }) => {
+        if (data.success && data.words && data.words.length > 0) {
+          setTranscriptWords(data.words);
+          setTranscriptStatus("ready");
+        } else {
+          setTranscriptStatus("failed");
+        }
+      })
+      .catch(() => {
+        setTranscriptStatus("failed");
+      });
+  }, [clip, sourcePath]);
+
+  useEffect(() => {
+    if (transcriptWords.length === 0) return;
+    const transcript = transcriptWords.map((w) => w.word).join(" ");
     const params = new URLSearchParams({
       transcript: transcript.slice(0, 200),
       language: "auto",
@@ -220,7 +257,7 @@ export default function StudioClient() {
         }
       })
       .catch(() => {});
-  }, [clip?.words]);
+  }, [transcriptWords]);
 
   useEffect(() => {
     const result = analyzeHookStrength(hook);
@@ -234,8 +271,8 @@ export default function StudioClient() {
     setRewriteAlternatives([]);
 
     try {
-      const transcript = clip.words
-        ? clip.words.map((w) => w.word).join(" ")
+      const transcript = transcriptWords.length > 0
+        ? transcriptWords.map((w) => w.word).join(" ")
         : "";
 
       const response = await fetch("/api/hooks/rewrite", {
@@ -275,8 +312,8 @@ export default function StudioClient() {
     setIsGeneratingCTA(true);
 
     try {
-      const transcript = clip.words
-        ? clip.words.map((w) => w.word).join(" ")
+      const transcript = transcriptWords.length > 0
+        ? transcriptWords.map((w) => w.word).join(" ")
         : "";
 
       const response = await fetch("/api/cta/generate", {
@@ -317,8 +354,8 @@ export default function StudioClient() {
     if (!clip) return;
     setIsGeneratingCuriosity(true);
     try {
-      const transcript = clip.words
-        ? clip.words.map((w) => w.word).join(" ")
+      const transcript = transcriptWords.length > 0
+        ? transcriptWords.map((w) => w.word).join(" ")
         : hook || caption || clip.title;
       const response = await fetch("/api/curiosity/generate", {
         method: "POST",
@@ -348,13 +385,13 @@ export default function StudioClient() {
   }
 
   async function fetchBRollSuggestions() {
-    if (!clip?.words || clip.words.length === 0) return;
+    if (transcriptWords.length === 0) return;
     try {
-      const segments = clip.words.map((w) => ({ text: w.word, start: w.start, end: w.end }));
+      const segments = transcriptWords.map((w) => ({ text: w.word, start: w.start, end: w.end }));
       const response = await fetch("/api/broll/suggest", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ transcript: clip.words.map((w) => w.word).join(" "), segments }),
+        body: JSON.stringify({ transcript: transcriptWords.map((w) => w.word).join(" "), segments }),
       });
       const data = await response.json() as {
         success: boolean;
@@ -436,7 +473,7 @@ function insertAtCursor(
           platform: clip.platform || "reels",
           duration: Math.round(duration),
           tone: selectedTone !== "auto" ? selectedTone : undefined,
-          words: clip.words,
+          words: transcriptWords.length > 0 ? transcriptWords : undefined,
         }),
       });
 
@@ -507,6 +544,7 @@ function insertAtCursor(
           captionStyleParams: styleParams,
           hook,
           caption,
+          words: transcriptWords.length > 0 ? transcriptWords : undefined,
           musicPath: musicEnabled ? (selectedMusicFile ?? undefined) : undefined,
           musicVolume: musicEnabled ? musicVolume : undefined,
           captionEffect,
@@ -564,8 +602,6 @@ function insertAtCursor(
       </div>
     );
   }
-
-  const hasWords = clip.words && clip.words.length > 0;
 
   return (
     <section className="min-h-screen px-6 py-10">
@@ -653,12 +689,22 @@ function insertAtCursor(
                 </span>
                 <span
                   className={`rounded-md px-1.5 py-0.5 text-[10px] font-medium uppercase ${
-                    hasWords
-                      ? "bg-emerald-500/10 text-emerald-400"
-                      : "bg-zinc-800 text-zinc-500"
+                    transcriptStatus === "loading"
+                      ? "bg-amber-500/10 text-amber-400"
+                      : transcriptStatus === "ready"
+                        ? "bg-emerald-500/10 text-emerald-400"
+                        : transcriptStatus === "failed"
+                          ? "bg-zinc-800 text-zinc-400"
+                          : "bg-zinc-800 text-zinc-500"
                   }`}
                 >
-                  {hasWords ? "Transcript available" : "No transcript"}
+                  {transcriptStatus === "loading"
+                    ? "Mentranskrip audio..."
+                    : transcriptStatus === "ready"
+                      ? "Transcript tersedia"
+                      : transcriptStatus === "failed"
+                        ? "AI caption mode"
+                        : "No transcript"}
                 </span>
               </div>
               <span className={`rounded-lg px-2.5 py-1 text-sm font-bold ${scoreBadgeClass(clip.score)}`}>
@@ -767,7 +813,7 @@ function insertAtCursor(
             </div>
 
             {/* Timeline Editor */}
-            {clip.words && clip.words.length > 0 && (
+            {transcriptWords.length > 0 && (
               <div className="mt-4">
                 <button
                   type="button"
@@ -775,7 +821,7 @@ function insertAtCursor(
                     if (!showTimeline && timelineCaptions.length === 0) {
                       const segs: Array<{ start: number; end: number; text: string }> = [];
                       let current = { start: 0, end: 0, text: "" };
-                      for (const w of clip.words!) {
+                      for (const w of transcriptWords) {
                         if (current.text === "") {
                           current = { start: w.start, end: w.end, text: w.word };
                         } else if (w.start - current.end < 0.5) {

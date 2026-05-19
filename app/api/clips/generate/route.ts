@@ -2,9 +2,6 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import path from "node:path";
-import fs from "node:fs/promises";
-import { createHash } from "node:crypto";
 import { analyzeSourceVideo, type ClipCandidate } from "@/app/lib/clips";
 import { renderClip } from "@/app/lib/ffmpeg/clipper";
 import { resolveSourceVideoPath } from "@/app/lib/ffmpeg/source-video";
@@ -145,13 +142,12 @@ export async function POST(request: Request) {
       clips.push(...results);
     }
 
-    const clipsWithTranscript = clips.filter((c) => c.words && c.words.length > 0).length;
-    console.log("[DONE]", Date.now() - t0, "ms —", clipsWithTranscript, "clips with transcript");
+    console.log("[DONE]", Date.now() - t0, "ms —", clips.length, "clips generated (STT on-demand in Studio)");
 
     return NextResponse.json({
       success: true,
       source: analysis.source,
-      metadata: { ...analysis.metadata, hasTranscript: clipsWithTranscript > 0 },
+      metadata: { ...analysis.metadata, hasTranscript: false },
       clips,
     });
   } catch (error) {
@@ -181,23 +177,8 @@ async function renderCandidate(
   language: string,
   tone?: string
 ): Promise<GeneratedClip> {
-  // STT runs concurrent with render — extract + transcribe this clip's audio
-  const clipDuration = candidate.endTime - candidate.startTime;
-  const sttResult = await transcribeClip(
-    resolvedPath,
-    candidate.startTime,
-    clipDuration,
-    language
-  );
-
-  if (sttResult.tempFile) {
-    fs.unlink(sttResult.tempFile).catch(() => {});
-  }
-
-  const clipWords = sttResult.words.length > 0 ? sttResult.words : [];
-
   try {
-    // Render and AI script in parallel
+    // Render and AI script in parallel — STT runs on-demand in Studio
     const [output, aiScript] = await Promise.all([
       renderClip({
         sourcePath: resolvedPath,
@@ -206,9 +187,9 @@ async function renderCandidate(
         renderMode: "generate",
         customWidth,
         customHeight,
-        words: clipWords,
+        words: [],
       }),
-      generateAIScript(candidate, clipWords, platform, language, tone),
+      generateAIScript(candidate, [], platform, language, tone),
     ]);
 
     const thumbPath = output.outputPath.replace(".mp4", "-thumb.jpg");
@@ -240,7 +221,7 @@ async function renderCandidate(
       hashtags: candidate.suggestedHashtags,
       startTime: candidate.startTime,
       endTime: candidate.endTime,
-      words: clipWords,
+      words: [],
       aiScript,
     };
   } catch (error) {
@@ -330,93 +311,6 @@ Return JSON:
   } catch (err) {
     console.error("[MIMO] AI script failed in", Date.now() - aiStart, "ms:", err);
     return undefined;
-  }
-}
-
-type TranscriptionWord = { word: string; start: number; end: number };
-
-async function extractAudioSegment(
-  sourcePath: string,
-  startTime: number,
-  duration: number
-): Promise<string> {
-  const hash = createHash("sha256")
-    .update(sourcePath)
-    .digest("hex")
-    .slice(0, 8);
-  const tempDir = path.join(process.cwd(), "outputs", "temp");
-  const tempFile = path.join(
-    tempDir,
-    `${hash}-${Math.round(startTime)}-${Math.round(duration)}.wav`
-  );
-
-  await fs.mkdir(tempDir, { recursive: true });
-
-  await execFileAsync(
-    "ffmpeg",
-    [
-      "-y",
-      "-ss",
-      startTime.toString(),
-      "-t",
-      duration.toString(),
-      "-i",
-      sourcePath,
-      "-ar",
-      "16000",
-      "-ac",
-      "1",
-      "-vn",
-      tempFile,
-    ],
-    { timeout: 15_000 }
-  );
-
-  return tempFile;
-}
-
-async function transcribeClip(
-  sourcePath: string,
-  startTime: number,
-  duration: number,
-  language: string
-): Promise<{ words: TranscriptionWord[]; tempFile: string | null }> {
-  const sttStart = Date.now();
-  let tempFile: string | null = null;
-
-  try {
-    tempFile = await extractAudioSegment(sourcePath, startTime, duration);
-
-    const scriptPath = path.join(process.cwd(), "scripts", "transcribe.py");
-    const args = [scriptPath, tempFile, "--model", "tiny"];
-    if (language !== "auto") {
-      args.push("--language", language);
-    }
-
-    const { stdout } = await execFileAsync("python", args, {
-      timeout: 30_000,
-      maxBuffer: 5 * 1024 * 1024,
-    });
-
-    const result = JSON.parse(stdout);
-    if (result.error) {
-      console.log("[STT] transcribe error:", result.error);
-      return { words: [], tempFile };
-    }
-
-    const words: TranscriptionWord[] = (result.words || []).map(
-      (w: { word: string; start: number; end: number }) => ({
-        word: w.word,
-        start: w.start + startTime,
-        end: w.end + startTime,
-      })
-    );
-
-    console.log("[STT] clip done in", Date.now() - sttStart, "ms —", words.length, "words");
-    return { words, tempFile };
-  } catch (err) {
-    console.log("[STT] clip failed in", Date.now() - sttStart, "ms:", err);
-    return { words: [], tempFile };
   }
 }
 
