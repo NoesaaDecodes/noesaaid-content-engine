@@ -34,19 +34,58 @@ export async function analyzeSourceVideo(
   options: ClipGenerationOptions,
   words?: TranscriptWord[]
 ): Promise<ClipGenerationResult> {
+  const t0 = Date.now();
   const sourcePath = source.resolvedPath || source.sourcePath;
+
+  console.log("[ANALYZE] probing duration...");
   const duration = source.duration || (await probeVideoDuration(sourcePath));
   const safeDuration = roundTime(duration);
+  console.log("[ANALYZE] duration:", safeDuration, "s — took", Date.now() - t0, "ms");
 
   if (!Number.isFinite(safeDuration) || safeDuration <= 0) {
     throw new Error("Unable to read source video duration with ffprobe.");
   }
 
   const normalizedOptions = normalizeClipOptions(options);
-  const sceneChanges = await getSceneChanges(sourcePath);
+
+  // Order 18: Fast path for long videos (> 5 minutes)
+  if (safeDuration > 300) {
+    console.log("[ANALYZE] long video detected, using fast path — took", Date.now() - t0, "ms");
+
+    // Use position-based heuristic for long videos
+    const candidates = buildClipCandidates(
+      safeDuration,
+      normalizedOptions,
+      words,
+      [], // no scene changes
+      null // no audio analysis
+    ).slice(0, normalizedOptions.maxClips);
+
+    console.log("[ANALYZE] total (fast path):", Date.now() - t0, "ms —", candidates.length, "candidates");
+
+    return {
+      source: {
+        sourcePath: source.sourcePath,
+        duration: safeDuration,
+      },
+      candidates,
+      metadata: {
+        duration: safeDuration,
+        platform: normalizedOptions.platform,
+        maxClips: normalizedOptions.maxClips,
+        targetDuration: normalizedOptions.targetDuration || defaultTargetDuration,
+      },
+    };
+  }
+
+  console.log("[ANALYZE] detecting scene changes...");
+  const sceneChanges = await getSceneChanges(sourcePath, safeDuration);
+  console.log("[ANALYZE] scene changes:", sceneChanges.length, "— took", Date.now() - t0, "ms");
 
   // Run audio analysis on full source for caching
+  console.log("[ANALYZE] analyzing audio...");
   const fullAudio = await getAudioAnalysis(sourcePath, 0, safeDuration);
+  console.log("[ANALYZE] audio done — took", Date.now() - t0, "ms");
 
   const candidates = buildClipCandidates(
     safeDuration,
@@ -55,6 +94,8 @@ export async function analyzeSourceVideo(
     sceneChanges,
     fullAudio
   ).slice(0, normalizedOptions.maxClips);
+
+  console.log("[ANALYZE] total:", Date.now() - t0, "ms —", candidates.length, "candidates");
 
   return {
     source: {
@@ -106,14 +147,22 @@ function hashSourcePath(sourcePath: string): string {
   return createHash("sha256").update(sourcePath).digest("hex").slice(0, 12);
 }
 
-async function detectSceneChanges(sourcePath: string): Promise<number[]> {
+async function detectSceneChanges(sourcePath: string, maxDuration?: number): Promise<number[]> {
   const ffmpegPath = process.env.FFMPEG_PATH || "ffmpeg";
   const args = [
     "-i", sourcePath,
+  ];
+
+  // Order 18: Limit scene detection to first 120s for long videos
+  if (maxDuration && maxDuration > 0) {
+    args.push("-t", maxDuration.toString());
+  }
+
+  args.push(
     "-vf", "select='gt(scene,0.3)',showinfo",
     "-f", "null",
-    "-",
-  ];
+    "-"
+  );
 
   return new Promise((resolve) => {
     execFile(ffmpegPath, args, { timeout: 60_000, maxBuffer: 10 * 1024 * 1024 }, (_error, _stdout, stderr) => {
@@ -132,7 +181,13 @@ async function detectSceneChanges(sourcePath: string): Promise<number[]> {
   });
 }
 
-async function getSceneChanges(sourcePath: string): Promise<number[]> {
+async function getSceneChanges(sourcePath: string, duration?: number): Promise<number[]> {
+  // Order 18: Skip scene detection for videos > 5 minutes
+  if (duration && duration > 300) {
+    console.log("[ANALYZE] scene detect skipped: video > 5min");
+    return [];
+  }
+
   const hash = hashSourcePath(sourcePath);
   const transcriptsDir = path.join(process.cwd(), "outputs", "transcripts");
   const cachePath = path.join(transcriptsDir, `${hash}-scenes.json`);
@@ -144,7 +199,8 @@ async function getSceneChanges(sourcePath: string): Promise<number[]> {
     // Cache miss
   }
 
-  const scenes = await detectSceneChanges(sourcePath);
+  // Order 18: Limit to first 120s for videos <= 5min
+  const scenes = await detectSceneChanges(sourcePath, duration && duration <= 300 ? 120 : undefined);
 
   try {
     await fs.mkdir(transcriptsDir, { recursive: true });
@@ -161,6 +217,13 @@ async function getAudioAnalysis(
   startTime: number,
   endTime: number
 ): Promise<{ analysis: AudioAnalysis; emotion: EmotionScore } | null> {
+  // Order 18: Skip audio analysis for videos > 5 minutes
+  const duration = endTime - startTime;
+  if (duration > 300) {
+    console.log("[ANALYZE] audio skipped: video > 5min");
+    return null;
+  }
+
   const hash = hashSourcePath(sourcePath);
   const transcriptsDir = path.join(process.cwd(), "outputs", "transcripts");
   const cachePath = path.join(
@@ -176,7 +239,9 @@ async function getAudioAnalysis(
   }
 
   try {
-    const analysis = await analyzeAudio(sourcePath, startTime, endTime);
+    // Order 18: Limit audio analysis to first 120s
+    const limitedEndTime = Math.min(endTime, startTime + 120);
+    const analysis = await analyzeAudio(sourcePath, startTime, limitedEndTime);
     const emotion = scoreEmotionalEnergy(analysis);
     const result = { analysis, emotion };
 

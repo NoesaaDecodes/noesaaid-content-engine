@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import path from "node:path";
 import { analyzeSourceVideo, type ClipCandidate } from "@/app/lib/clips";
 import { renderClip } from "@/app/lib/ffmpeg/clipper";
 import { resolveSourceVideoPath } from "@/app/lib/ffmpeg/source-video";
@@ -54,6 +53,9 @@ type GeneratedClip = {
 };
 
 export async function POST(request: Request) {
+  const t0 = Date.now();
+  console.log("[STEP 1] start");
+
   const input = await parseGenerateRequest(request);
 
   if (!input.success) {
@@ -66,6 +68,8 @@ export async function POST(request: Request) {
       { status: 400 }
     );
   }
+
+  console.log("[STEP 2] validation done", Date.now() - t0, "ms");
 
   try {
     const resolvedPath = await resolveSourceVideoPath(input.data.sourcePath);
@@ -82,10 +86,32 @@ export async function POST(request: Request) {
       );
     }
 
+    console.log("[STEP 3] file check done", Date.now() - t0, "ms");
+
+    // Order 18: Cap video duration at 2 hours
+    const { probeVideoDuration } = await import("@/app/lib/clips");
+    const videoDuration = await probeVideoDuration(resolvedPath);
+    if (videoDuration > 7200) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Video terlalu panjang",
+          detail: "Maksimal 120 menit. Video Anda " + Math.round(videoDuration / 60) + " menit.",
+        },
+        { status: 400 }
+      );
+    }
+
     const maxClips = Math.min(input.data.maxClips || 3, 5);
     // Force ultrafast quality for auto-generate mode (Order 14 FIX 3)
     const settings = normalizeRenderSettings({ ...input.data.settings, quality: "draft" });
-    const words = await transcribeSource(resolvedPath, input.data.language);
+
+    // Order 16: SKIP STT completely in generate mode for speed
+    const words: TranscriptionWord[] = [];
+    console.log("[STT] skipped for generate mode — using heuristic only");
+
+    // Generate candidates with heuristic scoring (no transcript)
+    console.log("[STEP 4] starting analyzeSourceVideo...");
     const analysis = await analyzeSourceVideo(
       {
         sourcePath: input.data.sourcePath,
@@ -99,16 +125,23 @@ export async function POST(request: Request) {
       },
       words
     );
+
+    console.log("[STEP 5] candidates done", Date.now() - t0, "ms", "—", analysis.candidates.length, "candidates");
+
     const candidates = analysis.candidates
       .slice()
       .sort((left, right) => right.score - left.score)
       .slice(0, maxClips);
+
+    console.log("[STEP 6] starting renders", Date.now() - t0, "ms", "—", candidates.length, "clips to render");
 
     const batchSize = 3;
     const clips: GeneratedClip[] = [];
 
     for (let i = 0; i < candidates.length; i += batchSize) {
       const batch = candidates.slice(i, i + batchSize);
+      const batchStart = Date.now();
+      console.log("[RENDER BATCH]", i / batchSize + 1, "—", batch.length, "clips");
       const results = await Promise.all(
         batch.map((candidate) =>
           renderCandidate(
@@ -124,13 +157,17 @@ export async function POST(request: Request) {
           )
         )
       );
+      console.log("[RENDER BATCH]", i / batchSize + 1, "done in", Date.now() - batchStart, "ms");
       clips.push(...results);
     }
+
+    console.log("[STEP 7] all renders done", Date.now() - t0, "ms");
+    console.log("[STEP 8] response ready", Date.now() - t0, "ms");
 
     return NextResponse.json({
       success: true,
       source: analysis.source,
-      metadata: analysis.metadata,
+      metadata: { ...analysis.metadata, hasTranscript: false },
       clips,
     });
   } catch (error) {
@@ -161,6 +198,8 @@ async function renderCandidate(
   language: string,
   tone?: string
 ): Promise<GeneratedClip> {
+  const clipStart = Date.now();
+  console.log("[CLIP] render start —", candidate.title.slice(0, 40));
   try {
     const [output, aiScript] = await Promise.all([
       renderClip({
@@ -174,6 +213,7 @@ async function renderCandidate(
       }),
       generateAIScript(candidate, words, platform, language, tone),
     ]);
+    console.log("[CLIP] render done in", Date.now() - clipStart, "ms");
 
     const thumbPath = output.outputPath.replace(".mp4", "-thumb.jpg");
     const thumbnailUrl = output.downloadUrl.replace(".mp4", "-thumb.jpg");
@@ -233,6 +273,8 @@ async function generateAIScript(
   language: string,
   tone?: string
 ): Promise<{ hook: string; caption: string; hashtags: string[] } | undefined> {
+  const aiStart = Date.now();
+  console.log("[MIMO] calling AI script for clip:", candidate.title.slice(0, 40));
   try {
     const clipWords = (words || []).filter(
       (w) => w.end > candidate.startTime && w.start < candidate.endTime
@@ -280,6 +322,8 @@ Return JSON:
     const cleaned = raw.replace(/```json/g, "").replace(/```/g, "").trim();
     const result = JSON.parse(cleaned);
 
+    console.log("[MIMO] AI script done in", Date.now() - aiStart, "ms");
+
     return {
       hook: String(result.hook || "").slice(0, 120),
       caption: String(result.caption || "").slice(0, 400),
@@ -288,43 +332,12 @@ Return JSON:
         : [],
     };
   } catch (err) {
-    console.error("AI script generation failed:", err);
+    console.error("[MIMO] AI script failed in", Date.now() - aiStart, "ms:", err);
     return undefined;
   }
 }
 
 type TranscriptionWord = { word: string; start: number; end: number };
-
-async function transcribeSource(
-  resolvedPath: string,
-  language: string
-): Promise<TranscriptionWord[]> {
-  try {
-    const scriptPath = path.join(process.cwd(), "scripts", "transcribe.py");
-    const args = [scriptPath, resolvedPath, "--model", "base"];
-    if (language !== "auto") {
-      args.push("--language", language);
-    }
-    console.log("[STT] timeout set to 240s");
-    const { stdout } = await execFileAsync("python", args, {
-      timeout: 240_000,
-      maxBuffer: 10 * 1024 * 1024,
-    });
-    const result = JSON.parse(stdout);
-    if (result.error) {
-      console.error("Transcription error:", result.error);
-      return [];
-    }
-    return (result.words || []).map((w: { word: string; start: number; end: number }) => ({
-      word: w.word,
-      start: w.start,
-      end: w.end,
-    }));
-  } catch (error) {
-    console.error("Transcription failed, falling back to static captions:", error);
-    return [];
-  }
-}
 
 async function parseGenerateRequest(request: Request) {
   try {

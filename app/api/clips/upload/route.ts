@@ -13,7 +13,7 @@ export const runtime = "nodejs";
 export const maxDuration = 120;
 
 const maxFilesPerUpload = 5;
-const maxUploadBytes = 250 * 1024 * 1024;
+const maxUploadBytes = 500 * 1024 * 1024;
 
 type UploadSuccess = {
   sourcePath: string;
@@ -132,7 +132,7 @@ async function saveUpload(file: File): Promise<UploadSuccess | UploadFailure> {
   if (file.size > maxUploadBytes) {
     return {
       filename: originalName,
-      error: "File is larger than the 250 MB upload limit.",
+      error: "File terlalu besar. Maksimal 500MB.",
     };
   }
 

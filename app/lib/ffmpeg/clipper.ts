@@ -555,9 +555,13 @@ async function runClipRender({
     ...audioFilters,
   ];
 
+  // Temporary debug log for Order 14 verification
+  console.log("[FILTERS LIST]", filters.map((f, i) => i + ": " + f.substring(0, 100)));
+
   const audioMap = musicPath ? ["-map", "[aout]"] : ["-map", "0:a?"];
 
   console.log("[FILTERS]", filters.length, "total | textFilters:", textFilters.length, "extra:", extraFilters.length, "gradient:", gradientFilters.length, "audio:", audioFilters.length);
+  console.log("[PRESET] quality:", settings.quality, "preset:", quality.preset, "crf:", quality.crf, "isGenerate:", isGenerate);
   console.log("[MUSIC] musicPath:", musicPath, "musicVolume:", musicVolume, "hasAudio:", hasAudio, "vol:", vol, "audioFilters:", audioFilters.length, "audioMap:", audioMap);
 
   await new Promise<void>((resolve, reject) => {

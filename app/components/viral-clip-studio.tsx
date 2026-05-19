@@ -118,6 +118,7 @@ type GenerateResponse =
   | {
       success: true;
       clips: ViralClip[];
+      metadata?: { hasTranscript?: boolean };
     }
   | {
       success: false;
@@ -204,9 +205,9 @@ export function ViralClipStudio({
     const selected = Array.from(files).slice(0, 5);
     if (selected.length === 0) return;
 
-    const oversized = selected.find((f) => f.size > 250 * 1024 * 1024);
+    const oversized = selected.find((f) => f.size > 500 * 1024 * 1024);
     if (oversized) {
-      setError(`${oversized.name} exceeds 250MB limit.`);
+      setError(`${oversized.name} exceeds 500MB limit.`);
       return;
     }
 
@@ -262,18 +263,14 @@ export function ViralClipStudio({
     if (!activeVideo) return;
 
     setIsGenerating(true);
-    setGenerateStep("Mentranskrip audio...");
+    setGenerateStep("Menganalisis video...");
     setElapsed(0);
     setError("");
     setClips([]);
 
     const stepTimer1 = window.setTimeout(
-      () => setGenerateStep("Menganalisis klip..."),
-      5000
-    );
-    const stepTimer2 = window.setTimeout(
       () => setGenerateStep("Merender klip..."),
-      15000
+      8000
     );
 
     try {
@@ -301,6 +298,12 @@ export function ViralClipStudio({
         );
       }
 
+      // Order 16: Show STT status
+      const hasTranscript = data.metadata?.hasTranscript;
+      if (hasTranscript) {
+        showToast("Transcript tersedia — klip lebih akurat!", "success");
+      }
+
       setClips(data.clips);
       setGenerateStep("Selesai!");
       showToast(`${data.clips.length} klip berhasil dibuat!`, "success");
@@ -315,7 +318,6 @@ export function ViralClipStudio({
       setGenerateStep("");
     } finally {
       window.clearTimeout(stepTimer1);
-      window.clearTimeout(stepTimer2);
       setIsGenerating(false);
     }
   }
@@ -443,7 +445,7 @@ export function ViralClipStudio({
                   : "Drop videos here or browse"}
               </p>
               <p className="mt-1.5 text-xs text-zinc-600">
-                MP4, MOV, MKV, WEBM up to 250MB
+                MP4, MOV, MKV, WEBM up to 500MB
               </p>
             </label>
 
