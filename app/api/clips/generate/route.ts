@@ -2,6 +2,9 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import path from "node:path";
+import fs from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { analyzeSourceVideo, type ClipCandidate } from "@/app/lib/clips";
 import { renderClip } from "@/app/lib/ffmpeg/clipper";
 import { resolveSourceVideoPath } from "@/app/lib/ffmpeg/source-video";
@@ -54,7 +57,6 @@ type GeneratedClip = {
 
 export async function POST(request: Request) {
   const t0 = Date.now();
-  console.log("[STEP 1] start");
 
   const input = await parseGenerateRequest(request);
 
@@ -68,8 +70,6 @@ export async function POST(request: Request) {
       { status: 400 }
     );
   }
-
-  console.log("[STEP 2] validation done", Date.now() - t0, "ms");
 
   try {
     const resolvedPath = await resolveSourceVideoPath(input.data.sourcePath);
@@ -86,9 +86,7 @@ export async function POST(request: Request) {
       );
     }
 
-    console.log("[STEP 3] file check done", Date.now() - t0, "ms");
-
-    // Order 18: Cap video duration at 2 hours
+    // Cap video duration at 2 hours
     const { probeVideoDuration } = await import("@/app/lib/clips");
     const videoDuration = await probeVideoDuration(resolvedPath);
     if (videoDuration > 7200) {
@@ -103,15 +101,9 @@ export async function POST(request: Request) {
     }
 
     const maxClips = Math.min(input.data.maxClips || 3, 5);
-    // Force ultrafast quality for auto-generate mode (Order 14 FIX 3)
     const settings = normalizeRenderSettings({ ...input.data.settings, quality: "draft" });
 
-    // Order 16: SKIP STT completely in generate mode for speed
-    const words: TranscriptionWord[] = [];
-    console.log("[STT] skipped for generate mode — using heuristic only");
-
     // Generate candidates with heuristic scoring (no transcript)
-    console.log("[STEP 4] starting analyzeSourceVideo...");
     const analysis = await analyzeSourceVideo(
       {
         sourcePath: input.data.sourcePath,
@@ -123,25 +115,19 @@ export async function POST(request: Request) {
         targetDuration: input.data.targetDuration,
         templateId: input.data.templateId,
       },
-      words
+      []
     );
-
-    console.log("[STEP 5] candidates done", Date.now() - t0, "ms", "—", analysis.candidates.length, "candidates");
 
     const candidates = analysis.candidates
       .slice()
       .sort((left, right) => right.score - left.score)
       .slice(0, maxClips);
 
-    console.log("[STEP 6] starting renders", Date.now() - t0, "ms", "—", candidates.length, "clips to render");
-
     const batchSize = 3;
     const clips: GeneratedClip[] = [];
 
     for (let i = 0; i < candidates.length; i += batchSize) {
       const batch = candidates.slice(i, i + batchSize);
-      const batchStart = Date.now();
-      console.log("[RENDER BATCH]", i / batchSize + 1, "—", batch.length, "clips");
       const results = await Promise.all(
         batch.map((candidate) =>
           renderCandidate(
@@ -150,24 +136,22 @@ export async function POST(request: Request) {
             settings,
             input.data.customWidth,
             input.data.customHeight,
-            words,
             input.data.platform,
             input.data.language,
             input.data.tone
           )
         )
       );
-      console.log("[RENDER BATCH]", i / batchSize + 1, "done in", Date.now() - batchStart, "ms");
       clips.push(...results);
     }
 
-    console.log("[STEP 7] all renders done", Date.now() - t0, "ms");
-    console.log("[STEP 8] response ready", Date.now() - t0, "ms");
+    const clipsWithTranscript = clips.filter((c) => c.words && c.words.length > 0).length;
+    console.log("[DONE]", Date.now() - t0, "ms —", clipsWithTranscript, "clips with transcript");
 
     return NextResponse.json({
       success: true,
       source: analysis.source,
-      metadata: { ...analysis.metadata, hasTranscript: false },
+      metadata: { ...analysis.metadata, hasTranscript: clipsWithTranscript > 0 },
       clips,
     });
   } catch (error) {
@@ -193,14 +177,27 @@ async function renderCandidate(
   settings: RenderSettings,
   customWidth: number | undefined,
   customHeight: number | undefined,
-  words: Array<{ word: string; start: number; end: number }> | undefined,
   platform: string,
   language: string,
   tone?: string
 ): Promise<GeneratedClip> {
-  const clipStart = Date.now();
-  console.log("[CLIP] render start —", candidate.title.slice(0, 40));
+  // STT runs concurrent with render — extract + transcribe this clip's audio
+  const clipDuration = candidate.endTime - candidate.startTime;
+  const sttResult = await transcribeClip(
+    resolvedPath,
+    candidate.startTime,
+    clipDuration,
+    language
+  );
+
+  if (sttResult.tempFile) {
+    fs.unlink(sttResult.tempFile).catch(() => {});
+  }
+
+  const clipWords = sttResult.words.length > 0 ? sttResult.words : [];
+
   try {
+    // Render and AI script in parallel
     const [output, aiScript] = await Promise.all([
       renderClip({
         sourcePath: resolvedPath,
@@ -209,11 +206,10 @@ async function renderCandidate(
         renderMode: "generate",
         customWidth,
         customHeight,
-        words,
+        words: clipWords,
       }),
-      generateAIScript(candidate, words, platform, language, tone),
+      generateAIScript(candidate, clipWords, platform, language, tone),
     ]);
-    console.log("[CLIP] render done in", Date.now() - clipStart, "ms");
 
     const thumbPath = output.outputPath.replace(".mp4", "-thumb.jpg");
     const thumbnailUrl = output.downloadUrl.replace(".mp4", "-thumb.jpg");
@@ -244,7 +240,7 @@ async function renderCandidate(
       hashtags: candidate.suggestedHashtags,
       startTime: candidate.startTime,
       endTime: candidate.endTime,
-      words: words || [],
+      words: clipWords,
       aiScript,
     };
   } catch (error) {
@@ -338,6 +334,91 @@ Return JSON:
 }
 
 type TranscriptionWord = { word: string; start: number; end: number };
+
+async function extractAudioSegment(
+  sourcePath: string,
+  startTime: number,
+  duration: number
+): Promise<string> {
+  const hash = createHash("sha256")
+    .update(sourcePath)
+    .digest("hex")
+    .slice(0, 8);
+  const tempDir = path.join(process.cwd(), "outputs", "temp");
+  const tempFile = path.join(
+    tempDir,
+    `${hash}-${Math.round(startTime)}-${Math.round(duration)}.wav`
+  );
+
+  await fs.mkdir(tempDir, { recursive: true });
+
+  await execFileAsync(
+    "ffmpeg",
+    [
+      "-y",
+      "-ss",
+      startTime.toString(),
+      "-t",
+      duration.toString(),
+      "-i",
+      sourcePath,
+      "-ar",
+      "16000",
+      "-ac",
+      "1",
+      "-vn",
+      tempFile,
+    ],
+    { timeout: 15_000 }
+  );
+
+  return tempFile;
+}
+
+async function transcribeClip(
+  sourcePath: string,
+  startTime: number,
+  duration: number,
+  language: string
+): Promise<{ words: TranscriptionWord[]; tempFile: string | null }> {
+  const sttStart = Date.now();
+  let tempFile: string | null = null;
+
+  try {
+    tempFile = await extractAudioSegment(sourcePath, startTime, duration);
+
+    const scriptPath = path.join(process.cwd(), "scripts", "transcribe.py");
+    const args = [scriptPath, tempFile, "--model", "tiny"];
+    if (language !== "auto") {
+      args.push("--language", language);
+    }
+
+    const { stdout } = await execFileAsync("python", args, {
+      timeout: 30_000,
+      maxBuffer: 5 * 1024 * 1024,
+    });
+
+    const result = JSON.parse(stdout);
+    if (result.error) {
+      console.log("[STT] transcribe error:", result.error);
+      return { words: [], tempFile };
+    }
+
+    const words: TranscriptionWord[] = (result.words || []).map(
+      (w: { word: string; start: number; end: number }) => ({
+        word: w.word,
+        start: w.start + startTime,
+        end: w.end + startTime,
+      })
+    );
+
+    console.log("[STT] clip done in", Date.now() - sttStart, "ms —", words.length, "words");
+    return { words, tempFile };
+  } catch (err) {
+    console.log("[STT] clip failed in", Date.now() - sttStart, "ms:", err);
+    return { words: [], tempFile };
+  }
+}
 
 async function parseGenerateRequest(request: Request) {
   try {

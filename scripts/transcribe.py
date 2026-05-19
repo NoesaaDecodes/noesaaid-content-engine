@@ -13,6 +13,8 @@ import sys
 import os
 from pathlib import Path
 
+sys.stdout.reconfigure(encoding="utf-8")
+
 
 def extract_audio(video_path: str) -> str:
     """Extract audio from video to a temp wav file using ffmpeg."""
