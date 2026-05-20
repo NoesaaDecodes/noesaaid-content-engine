@@ -135,10 +135,8 @@ const featurePills = [
 
 export function ViralClipStudio({
   standalone = false,
-  onOpenScriptStudio,
 }: {
   standalone?: boolean;
-  onOpenScriptStudio?: () => void;
 }) {
   const [uploadedVideos, setUploadedVideos] = useState<UploadedVideo[]>([]);
   const [activeSourcePath, setActiveSourcePath] = useState("");
@@ -947,18 +945,6 @@ export function ViralClipStudio({
           </motion.div>
         ) : null}
 
-        {/* Script Studio Link */}
-        {!hasResults && !isGenerating ? (
-          <div className="mt-10 text-center">
-            <button
-              type="button"
-              onClick={onOpenScriptStudio}
-              className="text-sm text-zinc-600 transition hover:text-zinc-400"
-            >
-              Need a script instead? Open NoesaaAI Script Studio
-            </button>
-          </div>
-        ) : null}
       </div>
     </section>
   );

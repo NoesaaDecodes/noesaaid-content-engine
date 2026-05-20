@@ -10,6 +10,7 @@ import {
   Download,
   FileVideo,
   RefreshCw,
+  Trash2,
 } from "lucide-react";
 
 type HistoryClip = {
@@ -46,10 +47,23 @@ function readHistory(): HistoryEntry[] {
 }
 
 export default function HistoryPage() {
-  const [entries] = useState<HistoryEntry[]>(readHistory);
+  const [entries, setEntries] = useState<HistoryEntry[]>(readHistory);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<"all" | "today" | "week">("all");
+
+  function deleteEntry(id: string) {
+    if (!confirm("Hapus history ini?")) return;
+    const next = entries.filter((e) => e.id !== id);
+    localStorage.setItem(storageKey, JSON.stringify(next));
+    setEntries(next);
+  }
+
+  function clearAll() {
+    if (!confirm("Hapus semua history?")) return;
+    localStorage.removeItem(storageKey);
+    setEntries([]);
+  }
 
   const now = new Date();
   const weekAgo = now.getTime() - 7 * 86400000;
@@ -79,7 +93,7 @@ export default function HistoryPage() {
         </p>
       </div>
 
-      {/* Search + Filter */}
+      {/* Search + Filter + Clear All */}
       <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center">
         <input
           type="text"
@@ -88,7 +102,7 @@ export default function HistoryPage() {
           placeholder="Cari history..."
           className="h-9 flex-1 rounded-lg border border-zinc-800 bg-zinc-950 px-3 text-sm text-white outline-none transition focus:border-cyan-400/50"
         />
-        <div className="flex gap-1.5">
+        <div className="flex items-center gap-1.5">
           {(["all", "today", "week"] as const).map((f) => (
             <button
               key={f}
@@ -103,6 +117,16 @@ export default function HistoryPage() {
               {f === "all" ? "Semua" : f === "today" ? "Hari ini" : "Minggu ini"}
             </button>
           ))}
+          {entries.length > 0 ? (
+            <button
+              type="button"
+              onClick={clearAll}
+              className="ml-2 inline-flex h-8 items-center gap-1.5 rounded-lg border border-red-500/30 px-2.5 text-xs font-medium text-red-400 transition hover:bg-red-500/10"
+            >
+              <Trash2 className="size-3" />
+              Hapus Semua
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -188,6 +212,14 @@ export default function HistoryPage() {
                         <ChevronDown className="size-3" />
                       )}
                       {isExpanded ? "Hide" : "View"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => deleteEntry(entry.id)}
+                      className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-zinc-800 px-2.5 text-xs text-zinc-500 transition hover:border-red-500/50 hover:text-red-400"
+                      aria-label="Hapus history ini"
+                    >
+                      <Trash2 className="size-3" />
                     </button>
                   </div>
                 </div>
